@@ -110,6 +110,7 @@ export const createMember = async (req, res) => {
       notes,
       isActive,
       initialPayment,
+      heightCm,
     } = req.body;
 
     if (!fullName?.trim()) {
@@ -226,7 +227,10 @@ export const updateMember = async (req, res) => {
       "emergencyContactName",
       "emergencyContactNumber",
       "address",
-      "branch",
+      // "branch" is deliberately NOT updatable. A member belongs to the branch
+      // they joined at, and moving them would retroactively move their payment
+      // history with them, silently rewriting both branches' past revenue. A
+      // genuine move is a new membership at the other branch.
       "planCode",
       "notes",
       "isActive",
@@ -253,6 +257,13 @@ export const updateMember = async (req, res) => {
     }
     if (req.body.totalFee !== undefined) {
       member.totalFee = Number(req.body.totalFee);
+    }
+    // Height drives BMI in the member portal. Coerced to a number because the
+    // admin form sends strings, and cleared to null rather than 0 — an unknown
+    // height must stay unknown, since 0 would produce an infinite BMI.
+    if (req.body.heightCm !== undefined) {
+      const h = Number(req.body.heightCm);
+      member.heightCm = req.body.heightCm === "" || Number.isNaN(h) ? null : h;
     }
 
     if (req.files?.photo) {

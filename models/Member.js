@@ -206,6 +206,22 @@ const MemberSchema = new mongoose.Schema(
       default: null,
       min: 0,
     },
+
+    /**
+     * How long this member's workout usually runs, set by them in the portal.
+     *
+     * Drives the automatic check-out: an open session is closed at
+     * checkInAt + sessionMinutes, so a member who forgets to tap out is
+     * credited with the session they actually did rather than one that runs
+     * until the next time anybody looks. Per-member because an hour-long
+     * treadmill visit and a two-hour lifting session are both normal here.
+     */
+    sessionMinutes: {
+      type: Number,
+      default: 90,
+      min: 60,
+      max: 120,
+    },
   },
   { timestamps: true },
 );

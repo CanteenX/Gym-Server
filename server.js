@@ -350,6 +350,8 @@ import transactionRoutes from "./routes/v1/transactions.routes.js";
 import expenseCategoryRoutes from "./routes/v1/expenseCategories.routes.js";
 import memberAuthRoutes from "./routes/v1/memberAuth.routes.js";
 import membershipPlanRoutes from "./routes/v1/membershipPlans.routes.js";
+import bodyMetricRoutes from "./routes/v1/bodyMetrics.routes.js";
+import attendanceRoutes from "./routes/v1/attendance.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -373,6 +375,8 @@ app.use("/api/v1", transactionRoutes);
 app.use("/api/v1", expenseCategoryRoutes);
 app.use("/api/v1", memberAuthRoutes);
 app.use("/api/v1", membershipPlanRoutes);
+app.use("/api/v1", bodyMetricRoutes);
+app.use("/api/v1", attendanceRoutes);
 
 console.log("✅ V1 API routes loaded");
 

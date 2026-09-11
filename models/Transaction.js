@@ -42,9 +42,20 @@ const TransactionSchema = new mongoose.Schema(
       default: "Cash",
     },
 
+    /**
+     * Which branch the money belongs to.
+     *
+     * "Common" is for costs that belong to the business rather than to either
+     * floor — shared rent, software, the accountant, the owner's own salary.
+     * Splitting those arbitrarily across two branches would distort each
+     * branch's profit, so they sit in their own bucket: visible to a super
+     * admin, excluded from a single branch's P&L.
+     *
+     * Income is never "Common" — a member pays at a branch. Only expenses use it.
+     */
     branch: {
       type: String,
-      enum: ["Vasna", "Gotri"],
+      enum: ["Vasna", "Gotri", "Common"],
       default: "Vasna",
       index: true,
     },

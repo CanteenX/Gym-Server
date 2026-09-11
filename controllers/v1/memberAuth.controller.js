@@ -69,6 +69,7 @@ const publicProfile = (member) => ({
   endDate: member.endDate,
   photo: member.photo,
   heightCm: member.heightCm,
+  sessionMinutes: member.sessionMinutes,
   totalFee: member.totalFee,
   paidAmount: member.paidAmount,
   balanceAmount: member.balanceAmount,
