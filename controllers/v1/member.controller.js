@@ -1,4 +1,8 @@
-import Member, { MEMBERSHIP_PLANS } from "../../models/Member.js";
+import fs from "node:fs";
+import path from "node:path";
+import Member from "../../models/Member.js";
+import MembershipPlan from "../../models/MembershipPlan.js";
+import { compressToWebP } from "../../middlewares/secureUpload.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -16,6 +20,43 @@ const endOfDay = (date) => {
   return d;
 };
 
+/**
+ * Converts an uploaded image to WebP and returns the stored path.
+ *
+ * The route's multer pass has compression disabled because the same field set
+ * accepts PDFs, which must not be transcoded. Optimising here — after upload,
+ * where the real file type is known — keeps PDFs intact while still shrinking
+ * photos substantially (typically 70-90%).
+ *
+ * On any failure the original file is kept, so a member never loses an upload
+ * to a conversion problem.
+ */
+const optimizeUpload = async (file) => {
+  if (!file?.path) return null;
+
+  const ext = path.extname(file.path).toLowerCase();
+  if (ext === ".pdf" || ext === ".webp") return file.path;
+
+  try {
+    const original = await fs.promises.readFile(file.path);
+    const webp = await compressToWebP(original, { quality: 82 });
+
+    // compressToWebP returns the input unchanged when sharp is unavailable.
+    if (webp === original) return file.path;
+
+    const webpPath = file.path.replace(/\.[^.]+$/, ".webp");
+    await fs.promises.writeFile(webpPath, webp);
+
+    if (webpPath !== file.path) {
+      await fs.promises.unlink(file.path).catch(() => {});
+    }
+    return webpPath;
+  } catch (error) {
+    console.error("[MEMBER] Image optimization failed:", error.message);
+    return file.path;
+  }
+};
+
 /** Adds whole months, clamping to the last valid day (31 Jan + 1mo = 28/29 Feb). */
 const addMonths = (date, months) => {
   const d = new Date(date);
@@ -27,12 +68,26 @@ const addMonths = (date, months) => {
   return d;
 };
 
+/**
+ * The plan catalogue, read from the Membership Plan master so the member form
+ * always reflects whatever plans the admin has configured.
+ */
 export const getMemberPlans = async (_req, res) => {
-  return res.status(200).json({
-    isOk: true,
-    status: 200,
-    data: MEMBERSHIP_PLANS,
-  });
+  try {
+    const plans = await MembershipPlan.find({ isActive: true }).sort({
+      sequence: 1,
+      label: 1,
+    });
+
+    return res.status(200).json({ isOk: true, status: 200, data: plans });
+  } catch (error) {
+    console.error("Error fetching member plans:", error);
+    return res.status(500).json({
+      isOk: false,
+      status: 500,
+      message: error.message || "Internal server error",
+    });
+  }
 };
 
 export const createMember = async (req, res) => {
@@ -75,7 +130,9 @@ export const createMember = async (req, res) => {
         .json({ isOk: false, status: 400, message: "Start date is required" });
     }
 
-    const plan = MEMBERSHIP_PLANS.find((p) => p.code === planCode);
+    const plan = planCode
+      ? await MembershipPlan.findOne({ code: planCode })
+      : null;
     const start = new Date(startDate);
 
     // End date is explicit when given, otherwise derived from the plan length.
@@ -126,8 +183,12 @@ export const createMember = async (req, res) => {
       isActive: isActive !== undefined ? isActive : true,
     });
 
-    if (req.files?.photo) member.photo = req.files.photo[0].path;
-    if (req.files?.idProof) member.idProof = req.files.idProof[0].path;
+    if (req.files?.photo) {
+      member.photo = await optimizeUpload(req.files.photo[0]);
+    }
+    if (req.files?.idProof) {
+      member.idProof = await optimizeUpload(req.files.idProof[0]);
+    }
 
     await member.save();
 
@@ -194,8 +255,12 @@ export const updateMember = async (req, res) => {
       member.totalFee = Number(req.body.totalFee);
     }
 
-    if (req.files?.photo) member.photo = req.files.photo[0].path;
-    if (req.files?.idProof) member.idProof = req.files.idProof[0].path;
+    if (req.files?.photo) {
+      member.photo = await optimizeUpload(req.files.photo[0]);
+    }
+    if (req.files?.idProof) {
+      member.idProof = await optimizeUpload(req.files.idProof[0]);
+    }
 
     await member.save();
 
@@ -232,9 +297,9 @@ export const renewMembership = async (req, res) => {
         .json({ isOk: false, status: 404, message: "Member not found" });
     }
 
-    const plan = MEMBERSHIP_PLANS.find(
-      (p) => p.code === (planCode || member.planCode),
-    );
+    const plan = await MembershipPlan.findOne({
+      code: planCode || member.planCode,
+    });
 
     // A renewal normally starts the day after the current period ends, unless
     // the membership already lapsed — then it starts today.

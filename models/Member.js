@@ -36,7 +36,12 @@ const PaymentSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-/** Plan catalogue. `months` drives the auto-calculated end date. */
+/**
+ * Seed constant only — the live plan catalogue is the MembershipPlan collection
+ * (models/MembershipPlan.js), managed from Master → Membership Plans. This array
+ * is kept solely so scripts/seedMembershipPlans.js can bootstrap the original
+ * five plans into that collection. Nothing at runtime should read it.
+ */
 export const MEMBERSHIP_PLANS = [
   { code: "MONTHLY", label: "Monthly", months: 1, defaultFee: 1200 },
   { code: "QUARTERLY", label: "Quarterly", months: 3, defaultFee: 3000 },
@@ -107,10 +112,13 @@ const MemberSchema = new mongoose.Schema(
     },
 
     // ===== Membership period =====
+    // No enum: plan codes are defined dynamically in the MembershipPlan master,
+    // so any code that master holds is valid here.
     planCode: {
       type: String,
-      enum: MEMBERSHIP_PLANS.map((p) => p.code),
       required: true,
+      trim: true,
+      uppercase: true,
       default: "MONTHLY",
     },
     startDate: {
