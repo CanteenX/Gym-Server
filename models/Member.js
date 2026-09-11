@@ -165,6 +165,47 @@ const MemberSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
+    /**
+     * Optional custom portal login ID — an email, a nickname, anything the
+     * front desk prefers. When blank the member signs in with their mobile
+     * number, which is why this is nullable rather than required: existing
+     * members keep working untouched.
+     */
+    loginId: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: null,
+    },
+
+    // ===== Member portal login =====
+    // Deliberately separate from the admin's CompanyMaster/Employee auth: that
+    // system uses session cookies and locks an account after 3 failed attempts,
+    // which would turn a forgotten password mid-workout into a support call.
+    // Members authenticate with JWT against these fields instead.
+    passwordHash: {
+      type: String,
+      default: "",
+      // Never sent to a client — stripped in toJSON below.
+      select: false,
+    },
+    /** Staff set the first password; the member is forced to change it. */
+    mustChangePassword: {
+      type: Boolean,
+      default: true,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+
+    /** Needed to compute BMI alongside the logged weight. */
+    heightCm: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
   },
   { timestamps: true },
 );
@@ -173,6 +214,17 @@ const MemberSchema = new mongoose.Schema(
 MemberSchema.index({ endDate: 1, isActive: 1 });
 MemberSchema.index({ trainerId: 1 });
 MemberSchema.index({ mobileNumber: 1 }, { unique: true });
+
+// Unique only among members who actually have a custom ID. A plain unique
+// index would treat every null as a value and reject the second member without
+// one — the same trap the receipt-number index fell into.
+MemberSchema.index(
+  { loginId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { loginId: { $type: "string" } },
+  },
+);
 
 /** Total actually received for the current membership period. */
 MemberSchema.virtual("paidAmount").get(function () {
@@ -184,7 +236,36 @@ MemberSchema.virtual("balanceAmount").get(function () {
   return Math.max(0, (this.totalFee || 0) - this.paidAmount);
 });
 
-MemberSchema.set("toJSON", { virtuals: true });
-MemberSchema.set("toObject", { virtuals: true });
+/**
+ * Whether portal credentials exist for this member.
+ *
+ * Stored rather than derived: `passwordHash` is `select: false`, so any normal
+ * query leaves it undefined and a virtual reading it would always report false
+ * — silently telling staff "no access" for members who can in fact log in.
+ * Kept in step by the pre-save hook below.
+ */
+MemberSchema.add({
+  hasPortalAccess: {
+    type: Boolean,
+    default: false,
+  },
+});
+
+MemberSchema.pre("save", function (next) {
+  if (this.isModified("passwordHash")) {
+    this.hasPortalAccess = Boolean(this.passwordHash);
+  }
+  next();
+});
+
+// Belt and braces: even if a query explicitly selects passwordHash, it must
+// never survive serialisation to a client.
+const stripSecrets = (_doc, ret) => {
+  delete ret.passwordHash;
+  return ret;
+};
+
+MemberSchema.set("toJSON", { virtuals: true, transform: stripSecrets });
+MemberSchema.set("toObject", { virtuals: true, transform: stripSecrets });
 
 export default mongoose.model("Member", MemberSchema);
