@@ -1,0 +1,78 @@
+name: Deploy Node.js Backend - Security Gate & Deploy
+
+on:
+  push:
+    branches:
+      - staging
+
+env:
+  SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+  SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+jobs:
+  #   sonarqube-scan:
+  #     name: Code Quality Check
+  #     runs-on: ubuntu-latest
+  #     permissions:
+  #       contents: read
+  #       pull-requests: write
+  #       checks: write
+  #     steps:
+  #       - name: Checkout repository
+  #         uses: actions/checkout@v4
+  #         with:
+  #           fetch-depth: 0
+
+  #       - name: SonarCloud Scan with Quality Gate
+  #         uses: SonarSource/sonarcloud-github-action@v2.2
+  #         env:
+  #           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+  #         with:
+  #           projectBaseDir: .
+  #           args: >
+  #             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+  #             -Dsonar.organization=${{ env.SONAR_ORGANIZATION }}
+
+  deploy-backend:
+    # needs: [sonarqube-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: SFTP Deploy (Direct File Transfer)
+        uses: wlixcc/SFTP-Deploy-Action@v1.2.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }} # pm2manager
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Local folder to upload
+          local_path: "./"
+          # Remote target
+          remote_path: "/home/${{ secrets.FTP_USERNAME_TEST }}/public_html/"
+          # Files to ignore
+          ignore: |
+            node_modules
+            .git
+            .github
+            frontend
+            build
+            package-lock.json
+
+      - name: Install dependencies and start process
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script: |
+            cd /home/${{ secrets.FTP_USERNAME_TEST }}/public_html/
+
+            # Load NVM for the pm2manager
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            npm install
+            pm2 restart process.json || pm2 start process.json --name "${{ secrets.FTP_USERNAME_TEST }}"
+            pm2 save

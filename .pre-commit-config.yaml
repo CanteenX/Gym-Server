@@ -1,0 +1,52 @@
+repos:
+    # 1. Standard Git Sanity Checks
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v4.5.0
+      hooks:
+          - id: check-json
+          - id: check-merge-conflict
+          - id: end-of-file-fixer
+          - id: trailing-whitespace
+          - id: no-commit-to-branch
+            args: [--branch, main, --branch, staging, --branch, production]
+
+    # 2. Security: Secret Detection (Prevents API key leaks)
+    - repo: https://github.com/gitleaks/gitleaks
+      rev: v8.18.1
+      hooks:
+          - id: gitleaks
+
+    # 3. Formatting: Prettier
+    - repo: https://github.com/pre-commit/mirrors-prettier
+      rev: v3.0.3
+      hooks:
+          - id: prettier
+            files: \.(js|ts|jsx|tsx|css|json|md)$
+
+    # 4. Code Quality: ESLint (Finds unused code & logic errors)
+    - repo: https://github.com/pre-commit/mirrors-eslint
+      rev: v8.52.0
+      hooks:
+          - id: eslint
+            files: \.(js|ts|jsx|tsx)$
+            args: [--fix]
+
+    # 5. Project Health: Knip (Finds unused files and dependencies)
+    - repo: local
+      hooks:
+          - id: knip
+            name: knip
+            entry: npx knip
+            language: system
+            pass_filenames: false
+            always_run: true
+
+    # TODO: Add Unit Tests in future
+    # 6. Safety: Unit Tests (Ensures new code doesn't break logic)
+    # - repo: local
+    #   hooks:
+    #       - id: unit-tests
+    #         name: run unit tests
+    #         entry: npm test -- --findRelatedTests
+    #         language: system
+    #         types: [javascript]

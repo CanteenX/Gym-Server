@@ -1,0 +1,45 @@
+name: Deploy Node.js Backend via FTP
+
+on:
+    push:
+        branches:
+            - production
+
+jobs:
+    deploy-backend:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Deploy backend files via FTP
+              uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+              with:
+                  server: ${{ secrets.FTP_SERVER }}
+                  username: ${{ secrets.FTP_USERNAME }}
+                  password: ${{ secrets.FTP_PASSWORD }}
+                  local-dir: ./
+                  server-dir: /public_html/
+                  dangerous-clean-slate: false
+                  exclude: |
+                      **/node_modules/**
+                      **/.git*
+                      **/.github/**
+                      **/frontend/**
+                      **/build/**
+                      **/package-lock.json
+
+            - name: Install Node dependencies on server
+              uses: appleboy/ssh-action@v1.0.3
+              with:
+                  host: ${{ secrets.SSH_HOST }}
+                  username: ${{ secrets.SSH_USER }}
+                  key: ${{ secrets.SSH_PRIVATE_KEY }}
+                  script: |
+                      cd /home/demo/public_html/
+                      export PATH=$PATH:/usr/local/bin
+                      pm2 restart process.json
+                      pm2 save
+                      pm2 startup
+                      pm2 save

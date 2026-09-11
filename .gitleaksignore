@@ -1,0 +1,15 @@
+# Gitleaks ignore file
+# This file tells gitleaks to ignore certain files or patterns
+
+# Ignore test files - they contain mock/test passwords, not real secrets
+tests/**/*.test.js
+tests/**/*.spec.js
+
+# Ignore specific fingerprints for test passwords (false positives)
+tests/routes/CompanyMasterRoutes.test.js:hashicorp-tf-password:111
+tests/routes/CompanyMasterRoutes.test.js:hashicorp-tf-password:135
+tests/routes/CompanyMasterRoutes.test.js:hashicorp-tf-password:167
+tests/routes/EmployeeRoutes.test.js:hashicorp-tf-password:169
+tests/routes/EmployeeRoutes.test.js:hashicorp-tf-password:186
+tests/routes/EmployeeRoutes.test.js:hashicorp-tf-password:211
+tests/routes/otpRoutes.test.js:hashicorp-tf-password:39
