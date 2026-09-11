@@ -352,6 +352,7 @@ import memberAuthRoutes from "./routes/v1/memberAuth.routes.js";
 import membershipPlanRoutes from "./routes/v1/membershipPlans.routes.js";
 import bodyMetricRoutes from "./routes/v1/bodyMetrics.routes.js";
 import attendanceRoutes from "./routes/v1/attendance.routes.js";
+import workoutRoutes from "./routes/v1/workout.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -377,6 +378,7 @@ app.use("/api/v1", memberAuthRoutes);
 app.use("/api/v1", membershipPlanRoutes);
 app.use("/api/v1", bodyMetricRoutes);
 app.use("/api/v1", attendanceRoutes);
+app.use("/api/v1", workoutRoutes);
 
 console.log("✅ V1 API routes loaded");
 

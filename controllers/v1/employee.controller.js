@@ -1,8 +1,44 @@
 import EmployeeModels from "../../models/Employee.js";
 import CompanyMaster from "../../models/CompanyMaster.js";
+import EmployeeRoles from "../../models/EmployeeRoles.js";
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import authService from "../../services/authService.js";
+import { scopedBranch, isSuperAdmin } from "../../middlewares/branchScope.js";
+
+/**
+ * Guards who may create or edit whom.
+ *
+ * Enforced HERE, in the controller, rather than only in the admin UI: hiding
+ * the "All Branches" option in a dropdown stops an honest mistake, not a
+ * crafted POST. Without this check a Gotri admin could create themselves a
+ * super admin account by adding two fields to the request body.
+ *
+ * Rules:
+ *   - a super admin may create anything;
+ *   - a branch admin may only create staff pinned to their OWN branch, and may
+ *     never mint a super admin or an all-branches account.
+ *
+ * Returns an error string when the request must be refused, or null when it is
+ * allowed. `branch` is the requested branch (undefined/"" meaning all).
+ */
+const branchAssignmentError = (req, { branch, isSuperAdmin: wantsSuperAdmin }) => {
+  if (isSuperAdmin(req)) return null;
+
+  const own = scopedBranch(req);
+  if (!own) return null;
+
+  if (wantsSuperAdmin === true || wantsSuperAdmin === "true") {
+    return "You do not have permission to create or modify a super admin account.";
+  }
+  if (!branch) {
+    return "You may only create staff for your own branch, not for all branches.";
+  }
+  if (branch !== own) {
+    return `You may only create staff for the ${own} branch.`;
+  }
+  return null;
+};
 
 // Helper: Escape regex special characters to prevent NoSQL injection
 const escapeRegex = (str = "") =>
@@ -22,7 +58,21 @@ export const createEmployee = async (req, res) => {
       address,
       password,
       isActive,
+      branch,
+      isSuperAdmin: wantsSuperAdmin,
     } = req.body;
+
+    const guardError = branchAssignmentError(req, {
+      branch,
+      isSuperAdmin: wantsSuperAdmin,
+    });
+    if (guardError) {
+      return res.status(403).json({
+        isOk: false,
+        message: guardError,
+        status: 403,
+      });
+    }
 
     if (typeof emailOffice !== "string") {
       return res.status(400).json({
@@ -58,8 +108,18 @@ export const createEmployee = async (req, res) => {
       address,
       password: hashedPassword,
       isActive,
+      // Normalised to null rather than "" so it matches the "all branches"
+      // sentinel the scope helpers expect.
+      branch: branch || null,
+      isSuperAdmin: wantsSuperAdmin === true || wantsSuperAdmin === "true",
       createdBy: req.user.role === "EMPLOYEE" ? req.user.id : null,
     });
+
+    // TODO: the founding super admin (websupport@barodaweb.net) still has to be
+    // created — deliberately NOT seeded here, because the password for that
+    // account has not been supplied. When it is, create that Employee (or
+    // CompanyMaster) once with branch: null and isSuperAdmin: true. Until then
+    // an existing super admin must create the first branch admins.
 
     await employee.save();
 
@@ -93,7 +153,21 @@ export const updateEmployee = async (req, res) => {
       cityId,
       address,
       isActive,
+      branch,
+      isSuperAdmin: wantsSuperAdmin,
     } = req.body;
+
+    const guardError = branchAssignmentError(req, {
+      branch,
+      isSuperAdmin: wantsSuperAdmin,
+    });
+    if (guardError) {
+      return res.status(403).json({
+        isOk: false,
+        message: guardError,
+        status: 403,
+      });
+    }
 
     const safeEmployeeId = typeof employeeId === "string" ? employeeId.trim() : "";
     const safeEmailOffice = typeof emailOffice === "string" ? emailOffice.trim() : "";
@@ -105,6 +179,17 @@ export const updateEmployee = async (req, res) => {
         isOk: false,
         message: "Employee not found",
         status: 400,
+      });
+    }
+
+    // A branch admin must not be able to reach ACROSS branches to edit someone
+    // else's staff — or to edit a super admin and take over the account.
+    const ownBranch = scopedBranch(req);
+    if (ownBranch && (employee.isSuperAdmin || employee.branch !== ownBranch)) {
+      return res.status(403).json({
+        isOk: false,
+        message: "You may only manage staff belonging to your own branch.",
+        status: 403,
       });
     }
 
@@ -131,6 +216,16 @@ export const updateEmployee = async (req, res) => {
     employee.cityId = cityId;
     employee.address = address;
     employee.isActive = isActive;
+    // Only a super admin may move someone between branches or change super-admin
+    // status; for a branch admin the guard above has already pinned `branch` to
+    // their own, so these are left untouched rather than silently rewritten.
+    if (isSuperAdmin(req)) {
+      if (branch !== undefined) employee.branch = branch || null;
+      if (wantsSuperAdmin !== undefined) {
+        employee.isSuperAdmin =
+          wantsSuperAdmin === true || wantsSuperAdmin === "true";
+      }
+    }
 
     await employee.save();
 
@@ -266,6 +361,11 @@ export const listEmployeesByParams = async (req, res) => {
     if (req.user.role === "EMPLOYEE") {
       matchCondition.createdBy = new mongoose.Types.ObjectId(req.user.id);
     }
+
+    // Branch scope, derived from the session — never from req.body. Applied
+    // after the client's own conditions so it cannot be widened by the request.
+    const ownBranch = scopedBranch(req);
+    if (ownBranch) matchCondition.branch = ownBranch;
 
     const safeMatch = typeof match === "string" ? match.trim() : "";
 
@@ -495,11 +595,43 @@ export const loginEmployee = async (req, res) => {
     await authService.recordSuccessfulLogin(employee._id, email);
 
     // Store user data in express session (in-memory)
+    //
+    // This MUST carry the same fields as the loginCompany path in
+    // company.controller.js. It previously wrote only {id, role, email, name},
+    // which meant an employee who logged in here had no roleId and no
+    // permissions on their session — so checkPermission had nothing to check
+    // against, and (once branch scoping landed) scopeFilter would have read an
+    // undefined branch and handed every branch admin the whole gym.
+    const employeeRole = await EmployeeRoles.findOne({
+      roleId: employee.roleId?._id || employee.roleId,
+      isActive: true,
+    }).select("roles updatedAt");
+
     req.session.user = {
       id: employee._id.toString(),
       role: "EMPLOYEE",
       email: employee.emailOffice,
       name: employee.employeeName,
+      roleId:
+        employee.roleId?._id?.toString() ||
+        employee.roleId?.toString() ||
+        null,
+      permissions:
+        employeeRole?.roles?.map((r) => ({
+          menuId: r.menuId?.toString(),
+          menuGroupId: r.menuGroupId?.toString(),
+          read: r.read,
+          write: r.write,
+          delete: r.delete,
+          edit: r.edit,
+          print: r.print,
+          mail: r.mail,
+        })) || [],
+      permissionsUpdatedAt: employeeRole?.updatedAt || null,
+      // Branch scope travels on the session because that is the only place a
+      // request cannot tamper with it. null = all branches.
+      branch: employee.branch || null,
+      isSuperAdmin: employee.isSuperAdmin === true,
     };
 
     return res.status(200).json({

@@ -1,6 +1,7 @@
 import Transaction from "../../models/Transaction.js";
 import Member from "../../models/Member.js";
 import { nextReceiptNumber } from "../../utils/receiptNumber.js";
+import { financialScopeFilter } from "../../middlewares/branchScope.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -21,12 +22,19 @@ const endOfDay = (date) => {
  * Builds the Mongo filter shared by the list and summary endpoints, so the
  * table and the charts can never disagree about what is in scope.
  */
-const buildFilter = (body = {}) => {
+const buildFilter = (body = {}, req = null) => {
   const { direction, branch, category, mode, fromDate, toDate, match } = body;
   const filter = { isActive: true };
 
   if (direction === "IN" || direction === "OUT") filter.direction = direction;
-  if (branch) filter.branch = branch;
+  // Branch comes from the session when the caller is a branch admin, and only
+  // then falls back to what the request asked for. Assigning after the spread
+  // is deliberate: the scope must win over the body, never the other way round.
+  if (req) {
+    Object.assign(filter, financialScopeFilter(req, branch));
+  } else if (branch) {
+    filter.branch = branch;
+  }
   if (category) filter.category = category;
   if (mode) filter.mode = mode;
 
@@ -295,7 +303,7 @@ export const listTransactionsByParams = async (req, res) => {
       ? Number(per_page)
       : 10;
 
-    const filter = buildFilter(req.body);
+    const filter = buildFilter(req.body, req);
 
     const allowed = ["transactionDate", "amount", "receiptNo", "createdAt"];
     const safeSortField = allowed.includes(sorton) ? sorton : "transactionDate";
@@ -340,7 +348,6 @@ export const listTransactionsByParams = async (req, res) => {
 export const getCashFlowSummary = async (req, res) => {
   try {
     const months = Number(req.query.months) > 0 ? Number(req.query.months) : 6;
-    const branch = req.query.branch || "";
 
     const now = new Date();
     const windowStart = new Date(
@@ -349,8 +356,22 @@ export const getCashFlowSummary = async (req, res) => {
       1,
     );
 
-    const scope = { isActive: true, transactionDate: { $gte: windowStart } };
-    if (branch) scope.branch = branch;
+    // One scope object drives all four aggregations below, so the chart, the
+    // category split and the summary tiles can never disagree about what a
+    // given user is allowed to see.
+    //
+    // For a branch admin this resolves to their own branch, which also EXCLUDES
+    // the "Common" bucket — shared rent, software and the owner's salary are
+    // business-level costs, and folding them into one branch's P&L would make
+    // that branch look unprofitable for money it does not carry. A super admin
+    // gets no branch restriction at all and therefore sees Common too.
+    const branchScope = financialScopeFilter(req, req.query.branch);
+
+    const scope = {
+      ...branchScope,
+      isActive: true,
+      transactionDate: { $gte: windowStart },
+    };
 
     const monthly = await Transaction.aggregate([
       { $match: scope },
@@ -409,7 +430,7 @@ export const getCashFlowSummary = async (req, res) => {
 
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const todayStart = startOfDay(now);
-    const tileScope = branch ? { branch } : {};
+    const tileScope = branchScope;
 
     const [thisMonth, today, allTime] = await Promise.all([
       Transaction.aggregate([

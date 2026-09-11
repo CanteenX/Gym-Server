@@ -111,6 +111,21 @@ const MemberSchema = new mongoose.Schema(
       default: null,
     },
 
+    /**
+     * The member's workout programme — a POINTER, not a copy.
+     *
+     * null is the normal case and means "follows the gym's default plan",
+     * resolved at read time rather than copied in here. That is the whole
+     * shared-default design: improving the default plan improves it for every
+     * member still on null, instantly, with no migration. A member only gets a
+     * value here when staff deliberately customise their programme.
+     */
+    workoutPlanId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "WorkoutPlan",
+      default: null,
+    },
+
     // ===== Membership period =====
     // No enum: plan codes are defined dynamically in the MembershipPlan master,
     // so any code that master holds is valid here.

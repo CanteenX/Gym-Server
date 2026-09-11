@@ -1,13 +1,16 @@
 import Trainer from "../../models/Trainer.js";
 import Member from "../../models/Member.js";
+import { scopeFilter, resolveBranchFilter } from "../../middlewares/branchScope.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 /** Lightweight list for dropdowns — active trainers only, name + branch. */
-export const listAllTrainers = async (_req, res) => {
+export const listAllTrainers = async (req, res) => {
   try {
-    const trainers = await Trainer.find({ isActive: true })
+    // Scoped so a branch admin's trainer dropdown cannot offer (or reveal) the
+    // other branch's staff.
+    const trainers = await Trainer.find({ ...scopeFilter(req), isActive: true })
       .select("fullName mobileNumber branch")
       .sort({ fullName: 1 });
 
@@ -166,7 +169,9 @@ export const listTrainersByParams = async (req, res) => {
     if (isActive !== undefined && isActive !== "") {
       matchCondition.isActive = isActive === true || isActive === "true";
     }
-    if (branch) matchCondition.branch = branch;
+    // Session scope wins over any client-supplied branch (see branchScope.js).
+    const effectiveBranch = resolveBranchFilter(req, branch);
+    if (effectiveBranch) matchCondition.branch = effectiveBranch;
 
     const safeMatch = typeof match === "string" ? match.trim() : "";
     if (safeMatch) {
@@ -339,7 +344,10 @@ export const listUnassignedMembers = async (req, res) => {
       isActive: true,
       $or: [{ trainerId: null }, { trainerId: { $exists: false } }],
     };
-    if (branch) condition.branch = branch;
+    // Assigning across branches must not even be possible to attempt, so the
+    // candidate pool itself is scoped.
+    const effectiveBranch = resolveBranchFilter(req, branch);
+    if (effectiveBranch) condition.branch = effectiveBranch;
 
     const safeMatch = typeof match === "string" ? match.trim() : "";
     if (safeMatch) {

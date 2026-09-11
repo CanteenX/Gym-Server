@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "node:fs";
 import { createSecureMultiUpload } from "../../middlewares/secureUpload.js";
+import { authMiddleware } from "../../middlewares/authMiddleware.js";
 import {
   createMember,
   updateMember,
@@ -51,14 +52,64 @@ const memberUpload = createSecureMultiUpload({
   compress: false,
 });
 
-router.get("/member-plans", getMemberPlans);
-router.get("/members-dashboard-stats", getMemberDashboardStats);
-router.post("/members-by-params", listMembersByParams);
-router.post("/members", memberUpload, createMember);
-router.get("/members/:id", getMemberById);
-router.put("/members/:id", memberUpload, updateMember);
-router.delete("/members/:id", deleteMember);
-router.post("/members/:id/renew", renewMembership);
-router.post("/members/:id/payments", addPayment);
+/**
+ * Staff-side member management. Every route requires an authenticated staff
+ * session (ADMIN or EMPLOYEE).
+ *
+ * Auth runs BEFORE memberUpload so an unauthenticated request is rejected
+ * before multer parses any file to disk.
+ *
+ * checkPermission is deliberately NOT applied yet — it resolves a menu by URL
+ * and 403s when the menu row is missing from MenuMaster, which would break
+ * screens whose menuUrl is not registered. Per-menu authorization is a
+ * separate, later change.
+ */
+router.get(
+  "/member-plans",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  getMemberPlans,
+);
+router.get(
+  "/members-dashboard-stats",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  getMemberDashboardStats,
+);
+router.post(
+  "/members-by-params",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  listMembersByParams,
+);
+router.post(
+  "/members",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  memberUpload,
+  createMember,
+);
+router.get(
+  "/members/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  getMemberById,
+);
+router.put(
+  "/members/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  memberUpload,
+  updateMember,
+);
+router.delete(
+  "/members/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  deleteMember,
+);
+router.post(
+  "/members/:id/renew",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  renewMembership,
+);
+router.post(
+  "/members/:id/payments",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  addPayment,
+);
 
 export default router;

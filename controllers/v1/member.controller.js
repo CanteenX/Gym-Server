@@ -3,6 +3,7 @@ import path from "node:path";
 import Member from "../../models/Member.js";
 import MembershipPlan from "../../models/MembershipPlan.js";
 import { compressToWebP } from "../../middlewares/secureUpload.js";
+import { scopeFilter, resolveBranchFilter } from "../../middlewares/branchScope.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -244,6 +245,13 @@ export const updateMember = async (req, res) => {
       member.trainerId = req.body.trainerId || null;
     }
 
+    // Same convention for the exercise plan: an empty string from the admin's
+    // "Gym default plan" option means null, which is not "no plan" but "follow
+    // whatever the gym default currently is" (see Member.workoutPlanId).
+    if (req.body.workoutPlanId !== undefined) {
+      member.workoutPlanId = req.body.workoutPlanId || null;
+    }
+
     if (req.body.dateOfBirth !== undefined) {
       member.dateOfBirth = req.body.dateOfBirth
         ? new Date(req.body.dateOfBirth)
@@ -469,7 +477,12 @@ export const listMembersByParams = async (req, res) => {
     if (isActive !== undefined && isActive !== "") {
       matchCondition.isActive = isActive === true || isActive === "true";
     }
-    if (branch) matchCondition.branch = branch;
+    // The client may still pass `branch` to narrow the view, but a branch
+    // admin's own scope OVERRIDES it: resolveBranchFilter ignores the request
+    // entirely for them and returns their branch. For a super admin it honours
+    // whatever was asked, or "" for both branches.
+    const effectiveBranch = resolveBranchFilter(req, branch);
+    if (effectiveBranch) matchCondition.branch = effectiveBranch;
 
     const today = startOfToday();
     const in7Days = endOfDay(
@@ -532,31 +545,41 @@ export const listMembersByParams = async (req, res) => {
  * Powers the dashboard. Returns headline counts plus the two actionable lists:
  * memberships lapsing inside 7 days, and members carrying an unpaid balance.
  */
-export const getMemberDashboardStats = async (_req, res) => {
+export const getMemberDashboardStats = async (req, res) => {
   try {
     const today = startOfToday();
     const in7Days = endOfDay(
       new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000),
     );
 
+    // Every figure on this dashboard is branch-scoped. This used to take no
+    // request at all (`_req`) and so reported gym-wide totals to everyone —
+    // a Vasna admin saw Gotri's member count, revenue and outstanding dues.
+    const scope = scopeFilter(req);
+
     const [totalMembers, activeMembers, expiringSoon, expired] =
       await Promise.all([
-        Member.countDocuments({}),
-        Member.countDocuments({ isActive: true, endDate: { $gte: today } }),
+        Member.countDocuments({ ...scope }),
+        Member.countDocuments({
+          ...scope,
+          isActive: true,
+          endDate: { $gte: today },
+        }),
         Member.find({
+          ...scope,
           isActive: true,
           endDate: { $gte: today, $lte: in7Days },
         })
           .sort({ endDate: 1 })
           .limit(50),
-        Member.find({ isActive: true, endDate: { $lt: today } })
+        Member.find({ ...scope, isActive: true, endDate: { $lt: today } })
           .sort({ endDate: 1 })
           .limit(50),
       ]);
 
     // "Payment due" = money outstanding for the current period. Computed in JS
     // because balance is a virtual derived from the payments subdocuments.
-    const allActive = await Member.find({ isActive: true });
+    const allActive = await Member.find({ ...scope, isActive: true });
     const paymentDue = allActive
       .filter((m) => m.balanceAmount > 0)
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))

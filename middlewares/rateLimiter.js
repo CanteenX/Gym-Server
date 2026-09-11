@@ -15,6 +15,30 @@
 import rateLimit from 'express-rate-limit';
 
 /**
+ * Limits are environment-aware.
+ *
+ * WHY: the production defaults below are deliberately strict — 5 login attempts
+ * per 15 minutes is what stops a brute-force run. But a developer working on the
+ * admin panel hits those same numbers in minutes: the panel fetches menus,
+ * permissions, members, trainers, plans and dashboard stats on every page load,
+ * so a 100-request general budget disappears in a handful of navigations and
+ * locks the operator out of their own tool.
+ *
+ * Raising the hardcoded numbers would have weakened production too, so each
+ * limit reads from the environment instead, falling back to a generous value in
+ * development and the strict one in production. Override any of them in .env
+ * (e.g. RATE_LIMIT_AUTH_MAX=20) without touching this file.
+ */
+const isProduction = process.env.NODE_ENV === 'production';
+
+/** Reads a positive integer from the environment, else the environment default. */
+const limitFrom = (envVar, prodDefault, devDefault) => {
+    const raw = Number(process.env[envVar]);
+    if (Number.isInteger(raw) && raw > 0) return raw;
+    return isProduction ? prodDefault : devDefault;
+};
+
+/**
  * Get client IP address from request
  * Handles various proxy configurations
  * @param {Object} req - Express request object
@@ -85,7 +109,9 @@ const skipIfHealthCheck = (req) => {
  */
 export const generalRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // 100 requests per window
+    // 100 in production; 5000 in development, where one admin page load costs
+    // a dozen requests.
+    max: limitFrom('RATE_LIMIT_GENERAL_MAX', 100, 5000),
     message: 'Too many requests from this IP, please try again after 15 minutes',
     standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
     legacyHeaders: false, // Disable `X-RateLimit-*` headers (use standardHeaders instead)
@@ -101,7 +127,9 @@ export const generalRateLimiter = rateLimit({
  */
 export const authRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Only 5 login attempts per window
+    // 5 in production — enough to stop a brute-force run. 100 in development,
+    // where logging in and out repeatedly is normal work.
+    max: limitFrom('RATE_LIMIT_AUTH_MAX', 5, 100),
     message: 'Too many login attempts from this IP, please try again after 15 minutes',
     standardHeaders: true,
     legacyHeaders: false,
@@ -125,7 +153,16 @@ export const authRateLimiter = rateLimit({
             retryAfterDate: new Date(req.rateLimit.resetTime).toISOString(),
         });
     },
-    skipSuccessfulRequests: false, // Count all requests, including failed ones
+    /**
+     * Successful logins no longer consume the budget.
+     *
+     * Counting them meant a legitimate operator signing in five times across a
+     * working day was locked out for fifteen minutes, while the attack this
+     * limiter exists to stop — repeated FAILED guesses — was measured with the
+     * same five slots. Only failures count now, which makes the limit strictly
+     * better at its actual job.
+     */
+    skipSuccessfulRequests: true,
 });
 
 /**
@@ -135,7 +172,7 @@ export const authRateLimiter = rateLimit({
  */
 export const passwordResetRateLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, // 1 hour
-    max: 3, // Only 3 password reset attempts per hour
+    max: limitFrom('RATE_LIMIT_PASSWORD_RESET_MAX', 3, 50),
     message: 'Too many password reset requests from this IP, please try again after an hour',
     standardHeaders: true,
     legacyHeaders: false,
@@ -160,7 +197,7 @@ export const passwordResetRateLimiter = rateLimit({
  */
 export const userRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 200, // 200 requests per window per user
+    max: limitFrom('RATE_LIMIT_USER_MAX', 200, 5000),
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: keyGenerator, // Uses IP:userId combination
@@ -174,7 +211,7 @@ export const userRateLimiter = rateLimit({
  */
 export const searchRateLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
-    max: 30, // 30 requests per minute
+    max: limitFrom('RATE_LIMIT_SEARCH_MAX', 30, 600),
     message: 'Too many search requests, please slow down',
     standardHeaders: true,
     legacyHeaders: false,
@@ -189,7 +226,7 @@ export const searchRateLimiter = rateLimit({
  */
 export const uploadRateLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, // 1 hour
-    max: 10, // 10 uploads per hour
+    max: limitFrom('RATE_LIMIT_UPLOAD_MAX', 10, 500),
     message: 'Too many file uploads, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
