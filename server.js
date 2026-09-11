@@ -346,6 +346,8 @@ import faqRoutes from "./routes/v1/faq.routes.js";
 import guideRoutes from "./routes/v1/guide.routes.js";
 import memberRoutes from "./routes/v1/members.routes.js";
 import trainerRoutes from "./routes/v1/trainers.routes.js";
+import transactionRoutes from "./routes/v1/transactions.routes.js";
+import expenseCategoryRoutes from "./routes/v1/expenseCategories.routes.js";
 import membershipPlanRoutes from "./routes/v1/membershipPlans.routes.js";
 
 app.use("/api/v1", companiesRoutes);
@@ -366,6 +368,8 @@ app.use("/api/v1", faqRoutes);
 app.use("/api/v1", guideRoutes);
 app.use("/api/v1", memberRoutes);
 app.use("/api/v1", trainerRoutes);
+app.use("/api/v1", transactionRoutes);
+app.use("/api/v1", expenseCategoryRoutes);
 app.use("/api/v1", membershipPlanRoutes);
 
 console.log("✅ V1 API routes loaded");
