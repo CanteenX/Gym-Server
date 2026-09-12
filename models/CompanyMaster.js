@@ -87,11 +87,15 @@ const CompanyMasterSchema = new mongoose.Schema(
     },
     addButtonColor: {
       type: String,
-      default: "#0ab39c",
+      // Brand green ($green in the admin SCSS), which is what the Active badge
+      // already uses - so buttons and badges finally agree. Was Velzon's teal
+      // #0ab39c, which read as off-brand against the navy panel.
+      default: "#4b7c5c",
     },
     removeButtonColor: {
       type: String,
-      default: "#f06548",
+      // Brand red ($red), matching the Expired badge. Was Velzon's orange.
+      default: "#a83a32",
     },
     addButtonTextColor: {
       type: String,
@@ -108,7 +112,10 @@ const CompanyMasterSchema = new mongoose.Schema(
       },
       themeType: {
         type: String,
-        default: "gradient",
+        // Solid fills. This default was served to every client and overrode the
+        // admin panel's own defaults entirely, which is why buttons rendered as
+        // saturated gradient pills no matter what the front end asked for.
+        default: "solid",
       },
       buttonType: {
         type: String,
