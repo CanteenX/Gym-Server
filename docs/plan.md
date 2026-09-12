@@ -15,8 +15,10 @@ Confirmed in scope:
 2. Contact-us form on the website, submissions landing in the admin panel
 3. Email setup (partly exists already — see §3)
 4. QR check-in on mobile for members **and trainers**: starts gym time, verifies
-   an active subscription, can **deny at the point of entry**, and writes an
-   entry visible in the admin panel
+   an active subscription, shows the member an **ALLOWED / DENIED** verdict, and
+   writes an entry visible in the admin panel in near-real time. Unattended —
+   see D2; nobody is at the door, so a denial informs and flags rather than
+   physically refusing entry.
 5. Full website CMS — every currently-static marketing page editable from admin
 6. Lead capture: `Lead` model, admin inbox, staff notification
 7. Free-trial / class booking with a slot cap
@@ -59,46 +61,156 @@ Two practical notes, not objections:
 
 These change the architecture, so they are yours to make.
 
-### D1 — How does a CMS-driven site stay SEO-friendly? *(blocks Phases 1 and 2)*
+### D1 — RESOLVED: the site becomes dynamic, rendered with ISR
 
-`Gym-frontend` is currently `output: "export"` — a fully static build. That is
-why it is fast and indexes perfectly. A CMS conflicts with it, because static
-HTML is generated at build time rather than per request.
+**Decision: drop `output: "export"` and run Next.js dynamically, using ISR with
+on-demand revalidation.**
 
-| Option | SEO | Freshness | Cost |
+Clearing up the SEO question first, because it drove the earlier
+recommendation: **dynamic rendering is not bad for SEO.** Only *client-side*
+fetching is, because a crawler receives an empty shell and never runs the fetch.
+Server-rendered and incrementally-regenerated pages both ship complete HTML.
+
+| Rendering | SEO | Delivery speed | Freshness |
 |---|---|---|---|
-| **A. Static + Publish button** (recommended) | Perfect — real HTML | ~2 min after publishing | Low. Keeps the current build; adds a Vercel Deploy Hook the admin calls. |
-| B. Switch to SSR/ISR | Good | Instant | Medium. Drops `output: "export"`, changes the deploy shape, adds per-request server cost. |
-| C. Static + client-side fetch | **Bad** — content invisible to crawlers | Instant | Low, but defeats requirement 8. |
+| Static export (today) | Excellent | Fastest — pure CDN | Frozen at build time |
+| **ISR + on-demand revalidate** (chosen) | **Excellent** | Near-static; cached HTML at the edge | **Instant** — admin save revalidates the affected path |
+| SSR on every request | Excellent | Slower TTFB, server cost per hit | Instant |
+| Static + client-side fetch | **Bad** | Fast shell | Instant |
 
-**Recommendation: A.** Marketing copy and adverts do not need sub-minute
-freshness, and C is disqualified by the SEO requirement. Admin gets an explicit
-"Publish to website" action, which is also safer than every keystroke going live.
+ISR is chosen over plain SSR because the marketing pages are read far more often
+than they are edited: pages are served as cached HTML like the static build, and
+`revalidatePath()` is called from the admin when content changes, so an edit is
+live in seconds without a rebuild and without paying a render on every visit.
+This removes the "Publish to website" button and the ~2 minute lag entirely.
 
-### D2 — Which direction does the QR scan go? *(blocks Phase 3)*
+**The real cost is architectural, not SEO.** Today there is ONE Vercel project:
+`Gym-Server` at the root, serving a folder of static files (`public/`, which
+contains the Next export and the admin SPA) plus one `api/index.js` serverless
+function. A dynamic Next app cannot be a folder of static files inside another
+project — it needs its own runtime for routing, RSC payloads and image
+optimization.
 
-You asked for both a scanner and a default QR. There are two directions and they
-are not equivalent:
+So the deployment has to be restructured. Recommended shape:
 
-| Direction | How | Presence proof | Denial UX |
+| | Project | Owns | Contains |
 |---|---|---|---|
-| **B1. Member shows a personal QR, the gym scans it** (recommended) | Portal renders a short-lived signed token as a QR; a staff/kiosk page scans it | Strong — the member is physically at the desk | Excellent: the scanner shows ACTIVE / EXPIRED / PAYMENT DUE instantly, so staff can refuse entry |
-| B2. Gym displays a QR, the member scans it | Branch QR on the wall, member's phone opens it | **Weak — a photographed QR works from home** | Poor: the member sees their own verdict, staff see nothing |
+| 1 | `Gym-frontend` (Next.js preset) | the domain | marketing site + member portal, dynamic/ISR; admin SPA served from its `public/admin/` |
+| 2 | `Gym-Server` (Express) | an internal URL | the API only |
 
-**Recommendation: B1 as the gate, B2 as a convenience.** B1 is the only one that
-can actually deny entry, and it matches the existing comment in
-`attendance.routes.js` that "a check-in is a claim about where a member is". If
-B2 is wanted as well, the branch QR must carry a **rotating** token rather than a
-static URL, or it is trivially abused.
+Project 1 rewrites `/api/*` to project 2. The single-domain requirement is
+preserved: the browser only ever sees one origin, so the `express-session`
+cookie stays first-party and there is still no CORS to maintain. The admin panel
+stays same-origin with the site because it is static and can live inside the
+Next app.
 
-### D3 — Trainer attendance shape
+Consequences to accept:
+- `/api/*` gains one proxy hop. Small next to the ~220 ms we already removed by
+  moving the function to `bom1`, but it is not zero.
+- Two projects to configure instead of one; the CI workflow changes shape,
+  deploying each project rather than assembling one `public/`.
+- Project 2 must stay pinned to `bom1` for the database colocation win.
+
+The single-project alternative is `vercel.json` legacy `builds` combining
+`@vercel/next` and `@vercel/node`. It keeps one project but opts out of
+zero-config and is a less-travelled path; I would only take it if the extra
+proxy hop proves to be a problem.
+
+### D2 — Check-in is UNATTENDED; staff watch the panel instead
+
+**Constraint given:** nobody stands at the door to scan. The member scans the
+gym's QR on their own phone, check-in happens unattended, and staff watch
+arrivals on the admin panel in near-real time.
+
+This inverts the earlier recommendation. With no one at the door, "deny at the
+point of entry" cannot be physical — the system cannot stop anyone walking in.
+What it *can* do is tell the member immediately and flag it to staff:
+
+- The member's screen shows the verdict: **ALLOWED**, or
+  **DENIED — membership expired / payment due, please see reception**.
+- The attempt is recorded either way, with `deniedReason`, so a refusal is
+  visible and auditable rather than just absent.
+- The panel surfaces denials prominently, because those are the rows staff must
+  act on.
+
+**The hard problem is now presence proof.** Unattended, a QR printed on the wall
+can be photographed once and used from a sofa forever, which makes attendance
+self-reported and the churn signal worthless.
+
+| Approach | Presence proof | Requires |
+|---|---|---|
+| **Rotating QR on a screen at reception** (recommended) | Strong — the code changes every 30–60 s, so a photo is useless within a minute | Any tablet/TV/spare phone at reception showing a kiosk page |
+| Static printed QR + device geofence | Moderate — raises effort, but GPS is spoofable and prompts for permission | Nothing physical; costs a permission prompt |
+| Static printed QR alone | **None** — attendance becomes self-reported | Nothing |
+
+**Recommendation: rotating QR on a screen.** The kiosk page needs no
+interaction and no one attending it — it just displays a QR derived from a
+branch secret plus the current time window, exactly like an authenticator code.
+The member's scan carries that short-lived token, so the server can tell a scan
+at the door from a scan at home. If there is no screen available at either
+branch, fall back to static + geofence and accept that attendance is
+approximately honest.
+
+### D2b — Manual session start ALREADY EXISTS; QR is the layer on top
+
+Worth stating plainly before Phase 3 is scoped: the member portal already has a
+working start-session button. `src/app/(portal)/attendance/page.tsx` posts to
+`/member-portal/attendance/check-in`, and the screen runs a live timer computed
+from `checkInAt` rather than an incrementing counter. The check-out and
+auto-close paths exist too.
+
+So the baseline is done: a member logs in, taps the button, and an attendance
+entry exists. Phase 3 does not build that - it adds the parts the button cannot
+provide:
+
+- **Presence proof.** The button can be pressed from anywhere; a rotating
+  reception QR is what ties a session to actually being at the gym.
+- **Eligibility gating.** The current button does not evaluate subscription
+  state, so an expired member can still start a session. Phase 3 adds the
+  ALLOW / DENY verdict and records `deniedReason`.
+- **Trainer sessions**, via the D3 discriminator.
+- **Staff visibility**, via the polling arrivals feed.
+
+This also means the two paths must write the same shape of row, distinguished by
+a `source` field (`SELF` vs `QR`), or the footfall numbers will not be
+comparable once the gym starts enforcing scans.
+### D2a — Real-time on the panel: polling, not WebSockets
+
+Also constrained by the architecture, so worth settling now: **the API is a
+serverless function and cannot hold a WebSocket or a Server-Sent Events stream.**
+Vercel functions are stateless and short-lived — `vercel.json` caps
+`maxDuration` at 30 s — so a persistent connection is not available without
+adding a third-party realtime service (Pusher, Ably) or a long-running host.
+
+**Decision: poll.** The admin check-in feed polls a lightweight
+`GET /api/v1/attendance/live` on an interval. Every 5 minutes as you suggested
+is fine, and 30–60 s is also affordable now that authenticated endpoints run at
+roughly 250 ms — an arrivals feed that lags 30 s reads as live to a person
+glancing at a screen. The endpoint returns only rows changed since a `since`
+timestamp so the payload stays small, and polling pauses while the browser tab
+is hidden so an idle panel costs nothing.
+
+### D3 — RESOLVED: one `Attendance` collection with a discriminator
 
 `Attendance` is modelled per member (`memberId` taken from the verified JWT).
-Trainers need check-in too: either add a nullable `trainerId` plus a
-`subjectType` discriminator, or create a separate `TrainerAttendance`.
+Trainers check in too, so the collection gains `subjectType: "MEMBER" | "TRAINER"`
+and a nullable `trainerId`, with `memberId` becoming nullable in the trainer case.
 
-**Recommendation: one collection with a discriminator.** The "who is in the gym
-now" view wants a single query, and the auto-close logic is identical.
+Chosen over a separate `TrainerAttendance` because:
+
+- "Who is in the gym now" and per-day footfall are one query rather than two
+  plus a merge, and those are the views the feature exists to serve.
+- The auto-close behaviour (a session left open is closed after a member-set
+  60–120 minutes) is identical for both, so a second collection would duplicate
+  it and the two copies would drift.
+- `Attendance` is already "one row per visit, not a counter", which is exactly
+  the shape a trainer shift needs.
+
+Cost of the decision, accepted knowingly: every existing attendance query must
+now filter on `subjectType`, or trainer shifts will silently appear in member
+footfall numbers. A partial index on `{ subjectType, branch, checkInAt }` keeps
+the dashboard queries fast, and the existing rows need a one-off migration to
+set `subjectType: "MEMBER"`.
 
 ---
 
@@ -141,7 +253,12 @@ Turns the static marketing pages into admin-managed content.
   controller and notify `nventra01@gmail.com` on each new lead.
 - **Frontend:** marketing sections read `SiteContent` at build time; adverts
   render from `Advertisement`; the contact form posts to the leads endpoint.
-- **Publish:** an admin "Publish to website" action calling a Vercel Deploy Hook.
+- **Freshness:** no publish step. Saving content calls
+  `revalidatePath()` on the affected route (per D1), so the change is live in
+  seconds while the page is still served as cached HTML.
+- **Rendering move:** this is the phase that drops `output: "export"` and splits
+  the deployment into the two projects described in D1. Do it first, before any
+  CMS content depends on it.
 
 **Risk: MEDIUM.** The lead endpoint is public, so it needs the existing
 `authRateLimiter`, a honeypot or Turnstile, and strict validation, or it becomes
@@ -161,21 +278,37 @@ per-page OG/Twitter images; canonical URLs; a `next/image` sizing pass.
 
 Per D2 and D3.
 
-- `GET /member-portal/checkin-token` → short-lived signed token (60–90 s TTL),
-  rendered as a QR in the portal, mobile-first.
-- `POST /api/v1/attendance/scan` (staff-authenticated) → verifies the token,
-  resolves member or trainer, evaluates eligibility (active subscription,
-  payment due, inactive flag) and returns an explicit `ALLOW` / `DENY` + reason
-  **before** writing attendance.
-- Kiosk page in the admin panel: camera scanner, large ALLOW/DENY result, branch
-  taken from the signed-in employee's scope.
+- `GET /api/v1/kiosk/branch-token` (kiosk-authenticated) → rotating branch token
+  for the reception screen, valid for one 30–60 s window.
+- `POST /member-portal/attendance/scan` (**member**-authenticated — the member's
+  own phone makes this call) → verifies the scanned branch token is for the
+  current window, resolves member or trainer, evaluates eligibility (active
+  subscription, payment due, inactive flag) and returns an explicit
+  `ALLOW` / `DENY` + reason, recording the attempt either way.
+- `GET /api/v1/attendance/live` (staff-authenticated) → arrivals since a `since`
+  timestamp, for the admin feed.
+- Reception kiosk page (unattended) displaying a rotating branch QR, refreshed
+  every 30-60 s from a branch secret plus the time window - no interaction and
+  nobody attending it.
+- Member-side scanner in the portal on mobile; the verdict is shown to the
+  member, since no one is at the door to refuse entry.
+- Admin arrivals feed polling GET /api/v1/attendance/live, denials surfaced
+  first because those are the rows staff must act on.
 - `Attendance` gains `subjectType`, `trainerId` and `deniedReason`, so refusals
   are auditable rather than invisible.
 - Admin: live "in the gym now" plus per-day footfall.
 
-**Risk: MEDIUM-HIGH.** This gates physical entry — a false DENY is a paying
-member being turned away at the desk. The eligibility rules need unit tests, and
-there must be a staff override that is itself audit-logged.
+**Risk: MEDIUM.** Lower than when a person was refusing entry, because a false
+DENY now misinforms a member rather than physically turning them away — but it
+still tells a paying member their membership has lapsed when it has not, at the
+door, with nobody there to correct it. So the eligibility rules still need unit
+tests, the message must direct them to reception rather than dead-ending, and
+staff need a one-click "mark as allowed" on the feed that is itself audit-logged.
+
+The other exposure is the rotating token: if the kiosk screen and the server
+drift out of time sync, every scan fails. The token window must be generous
+(accept the previous window too) and the kiosk page should surface its own clock
+skew rather than silently rejecting everyone.
 **Effort: 12–16 h.**
 
 ### Phase 4 — Visibility: attendance views, reports, exports, audit log
