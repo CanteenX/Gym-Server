@@ -92,6 +92,23 @@ function logError(error) {
 const app = express();
 let databasestatus = "In-Progress";
 
+// Vercel terminates TLS at its edge and forwards plain HTTP to the function, so
+// req.secure is false and req.protocol is "http" no matter what the browser
+// used. express-session refuses to send a cookie marked Secure over what it
+// believes is an insecure connection, so `secure: true` below silently emitted
+// NO Set-Cookie at all: login returned 200 and every following request was
+// unauthenticated. Trusting one hop makes Express read X-Forwarded-Proto.
+//
+// It also restores req.ip, which the rate limiters key on and which is recorded
+// against failed login attempts - without this every request looks like it came
+// from the same address.
+//
+// Exactly one hop, and only where we know a trusted edge is in front: a wider
+// setting would let a client spoof X-Forwarded-For and evade the rate limiter.
+if (IS_SERVERLESS) {
+  app.set("trust proxy", 1);
+}
+
 // ============ SECURITY MIDDLEWARE (Apply FIRST) ============
 // 1. Security Headers (Helmet + custom headers)
 app.use(securityHeaders);

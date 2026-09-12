@@ -108,7 +108,26 @@ export const getCorsConfig = (allowedOrigins = []) => {
         'https://demo-test.barodaweb.net.in',
     ];
 
-    const origins = new Set([...defaultOrigins, ...allowedOrigins]);
+    // ALLOWED_ORIGINS is passed in by the caller (see server.js), so it is not
+    // re-read here.
+    //
+    // The single-domain deployment serves the admin panel from the SAME host as
+    // this API, and browsers send `Origin: <that host>` on every state-changing
+    // request even when it is same-origin. Blocking it rejected every admin
+    // login. Vercel injects both of these; the production one is stable, the
+    // other is the per-deployment URL.
+    const selfOrigins = [
+        process.env.VERCEL_PROJECT_PRODUCTION_URL,
+        process.env.VERCEL_URL,
+    ]
+        .filter(Boolean)
+        .map((host) => (host.startsWith('http') ? host : `https://${host}`));
+
+    const origins = new Set([
+        ...defaultOrigins,
+        ...selfOrigins,
+        ...allowedOrigins,
+    ]);
 
     return {
         origin: (origin, callback) => {
