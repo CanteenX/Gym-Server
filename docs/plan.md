@@ -57,9 +57,10 @@ Two practical notes, not objections:
 
 ---
 
-## 2. Decisions needed before Phase 1 starts
+## 2. Architecture decisions — all resolved
 
-These change the architecture, so they are yours to make.
+Settled with the owner on 2026-09-13. Each one changes the shape of the work, so
+the reasoning is kept here rather than only in a commit message.
 
 ### D1 — RESOLVED: the site becomes dynamic, rendered with ISR
 
