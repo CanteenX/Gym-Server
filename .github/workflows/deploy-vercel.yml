@@ -89,7 +89,10 @@ jobs:
         working-directory: .build/admin
         env:
           VITE_API_URL: ""
-          ADMIN_BASE_PATH: "/admin/"
+          # ADMIN_BASE_PATH is deliberately NOT set: "/admin/" is already the
+          # default in vite.config.js. Passing it only creates a way to get it
+          # wrong - on Git Bash, MSYS rewrites "/admin/" to a Windows path and
+          # Vite silently emits unreachable asset URLs.
         run: |
           # The template still carries peer-dependency conflicts from Velzon.
           npm ci --legacy-peer-deps || npm install --legacy-peer-deps

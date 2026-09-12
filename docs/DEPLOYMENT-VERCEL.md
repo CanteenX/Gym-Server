@@ -101,7 +101,10 @@ To reproduce a deploy by hand:
 
 ```bash
 cd ../Gym-frontend && NEXT_PUBLIC_API_URL="" npm run build
-cd ../Gym-Admin    && ADMIN_BASE_PATH="/admin/" npm run build
+cd ../Gym-Admin    && npm run build   # /admin/ is the default; do NOT pass
+                                   # ADMIN_BASE_PATH on Git Bash - MSYS rewrites
+                                   # it to a Windows path and the SPA ships with
+                                   # unreachable asset URLs (blank page).
 cd ../Gym-Server
 rm -rf public && mkdir -p public
 cp -r ../Gym-frontend/out/. public/
