@@ -3,6 +3,7 @@ import path from "node:path";
 import Member from "../../models/Member.js";
 import MembershipPlan from "../../models/MembershipPlan.js";
 import { compressToWebP } from "../../middlewares/secureUpload.js";
+import { persistBuffer } from "../../storage/fileStore.js";
 import { scopeFilter, resolveBranchFilter } from "../../middlewares/branchScope.js";
 
 const escapeRegex = (str = "") =>
@@ -33,7 +34,42 @@ const endOfDay = (date) => {
  * to a conversion problem.
  */
 const optimizeUpload = async (file) => {
-  if (!file?.path) return null;
+  if (!file) return null;
+
+  // The uploader validated these bytes but deliberately did not store them
+  // (compress:false => storagePending), so this is the only write that happens.
+  // Storing first and re-encoding afterwards would leave an orphaned
+  // full-resolution copy behind whenever the cleanup delete failed.
+  if (file.storagePending && file.buffer) {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    let buffer = file.buffer;
+    let outExt = ext || ".bin";
+    let mime = file.mimetype || "application/octet-stream";
+
+    if (ext !== ".pdf" && ext !== ".webp") {
+      try {
+        const webp = await compressToWebP(buffer, { quality: 82 });
+        // compressToWebP returns the input unchanged when sharp is unavailable.
+        if (webp !== buffer) {
+          buffer = webp;
+          outExt = ".webp";
+          mime = "image/webp";
+        }
+      } catch (error) {
+        console.error("[MEMBER] Image optimization failed:", error.message);
+      }
+    }
+
+    const base = (file.filename || "upload").replace(/\.[^.]+$/, "");
+    return persistBuffer(
+      buffer,
+      `${base}${outExt}`,
+      mime,
+      file.destination || "uploads",
+    );
+  }
+
+  if (!file.path) return null;
 
   const ext = path.extname(file.path).toLowerCase();
   if (ext === ".pdf" || ext === ".webp") return file.path;

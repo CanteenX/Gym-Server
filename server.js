@@ -10,6 +10,8 @@ import dotenv from "dotenv";
 import hpp from "hpp";
 import session from "express-session";
 import { setupSwagger } from "./config/swagger.js";
+import { IS_SERVERLESS, IS_LONG_RUNNING } from "./config/runtime.js";
+import { connectDB } from "./config/db.js";
 
 // ============ SECURITY IMPORTS ============
 // OWASP-compliant security middleware
@@ -34,8 +36,10 @@ dotenv.config();
 
 globalThis.__basedir = __dirname;
 
-// Create log directory if it doesn't exist
-if (!fs.existsSync("log")) {
+// Create log directory if it doesn't exist.
+// Skipped on Vercel: the function filesystem is read-only, so mkdirSync throws
+// EROFS at module load and takes down every route on cold start.
+if (IS_LONG_RUNNING && !fs.existsSync("log")) {
   fs.mkdirSync("log");
 }
 
@@ -59,6 +63,12 @@ function logError(error) {
     message: error?.message,
     stack: error?.stack,
   };
+  // No writable disk on Vercel, and nothing could read the file anyway -
+  // stderr is picked up by the platform log drain instead.
+  if (IS_SERVERLESS) {
+    console.error("[error]", filedata);
+    return;
+  }
   try {
     let writecontent = [];
     if (fs.existsSync("log/error.html")) {
@@ -139,7 +149,11 @@ app.use("/uploads", express.static("uploads", {
   }
 }));
 app.use(express.static("files"));
-app.use("/", express.static(path.join(__dirname, "/out/admin")));
+// Express only serves the admin SPA on the PM2/FTP deployment. On Vercel the
+// build is uploaded to the CDN under /admin and this would never be hit.
+if (IS_LONG_RUNNING) {
+  app.use("/", express.static(path.join(__dirname, "/out/admin")));
+}
 // NOTE: Removed /log static serving for security - logs should not be publicly accessible
 
 // 7. Express Session - MongoDB Session Storage (persistent)
@@ -185,154 +199,25 @@ app.use(session({
 console.log("✅ Express session middleware configured (MongoDB storage)");
 
 mongoose.set("strictQuery", false);
-mongoose.set("debug", true);
+// Query logging is very noisy and echoes document contents into the log drain;
+// opt in explicitly rather than shipping it on by default.
+mongoose.set("debug", process.env.MONGOOSE_DEBUG === "true");
 
-const dbURI = process.env.DATABASE;
 
-import MenuGroupMaster from "./models/MenuGroupMaster.js";
-import MenuMaster from "./models/MenuMaster.js";
-
-const seedFaqMenus = async () => {
-  try {
-    const setupGroup = await MenuGroupMaster.findOne({ menuGroupName: "Setup" });
-    if (!setupGroup) {
-      console.log("⚠️ Setup menu group not found. Cannot seed FAQ menus.");
-      return;
-    }
-
-    // 1. Create or Find "Faq Master" parent menu under Setup
-    let faqMasterMenu = await MenuMaster.findOne({
-      menuName: "Faq Master",
-      menuGroup: setupGroup._id,
-    });
-
-    if (!faqMasterMenu) {
-      faqMasterMenu = new MenuMaster({
-        menuName: "Faq Master",
-        menuGroup: setupGroup._id,
-        menuUrl: "#",
-        sequence: 6,
-        isActive: true,
-        isParent: true,
-        parentMenu: null,
-        icon: "ri-question-answer-line",
-      });
-      await faqMasterMenu.save();
-      console.log("✅ Seeded parent FAQ Master menu");
-    }
-
-    // 2. Create or Find "FAQ Categories" child menu
-    let faqCategoryMenu = await MenuMaster.findOne({
-      menuName: "FAQ Categories",
-      parentMenu: faqMasterMenu._id,
-    });
-
-    if (!faqCategoryMenu) {
-      faqCategoryMenu = new MenuMaster({
-        menuName: "FAQ Categories",
-        menuGroup: setupGroup._id,
-        menuUrl: "/faq-category",
-        sequence: 1,
-        isActive: true,
-        isParent: false,
-        parentMenu: faqMasterMenu._id,
-      });
-      await faqCategoryMenu.save();
-      console.log("✅ Seeded child FAQ Categories menu");
-    }
-
-    // 3. Create or Find "FAQs" child menu
-    let faqsMenu = await MenuMaster.findOne({
-      menuName: "FAQs",
-      parentMenu: faqMasterMenu._id,
-    });
-
-    if (!faqsMenu) {
-      faqsMenu = new MenuMaster({
-        menuName: "FAQs",
-        menuGroup: setupGroup._id,
-        menuUrl: "/faq",
-        sequence: 2,
-        isActive: true,
-        isParent: false,
-        parentMenu: faqMasterMenu._id,
-      });
-      await faqsMenu.save();
-      console.log("✅ Seeded child FAQs menu");
-    }
-  } catch (err) {
-    console.error("❌ Error seeding FAQ menus =>", err);
-  }
-};
-
-const seedHelpAndGuideMenus = async () => {
-  try {
-    let helpGroup = await MenuGroupMaster.findOne({ menuGroupName: "Help and Guide" });
-    if (!helpGroup) {
-      helpGroup = new MenuGroupMaster({
-        menuGroupName: "Help and Guide",
-        sequence: 5,
-        isActive: true,
-        isLink: false,
-        menuUrl: "#",
-        icon: "ri-customer-service-line",
-      });
-      await helpGroup.save();
-      console.log("✅ Seeded Help and Guide menu group");
-    }
-
-    let guidesGalleryMenu = await MenuMaster.findOne({
-      menuName: "Guides Gallery",
-      menuGroup: helpGroup._id,
-    });
-
-    if (!guidesGalleryMenu) {
-      guidesGalleryMenu = new MenuMaster({
-        menuName: "Guides Gallery",
-        menuGroup: helpGroup._id,
-        menuUrl: "/guides-gallery",
-        sequence: 1,
-        isActive: true,
-        isParent: false,
-        parentMenu: null,
-      });
-      await guidesGalleryMenu.save();
-      console.log("✅ Seeded Guides Gallery menu");
-    }
-
-    let manageGuidesMenu = await MenuMaster.findOne({
-      menuName: "Manage Guides",
-      menuGroup: helpGroup._id,
-    });
-
-    if (!manageGuidesMenu) {
-      manageGuidesMenu = new MenuMaster({
-        menuName: "Manage Guides",
-        menuGroup: helpGroup._id,
-        menuUrl: "/manage-guides",
-        sequence: 2,
-        isActive: true,
-        isParent: false,
-        parentMenu: null,
-      });
-      await manageGuidesMenu.save();
-      console.log("✅ Seeded Manage Guides menu");
-    }
-  } catch (err) {
-    console.error("❌ Error seeding Help and Guide menus =>", err);
-  }
-};
+// Menu seeds moved to scripts/seedMenus.js so CI can run them once per release
+// on the serverless target, where boot-time seeding would re-run on every cold
+// start. The long-running process still seeds at boot via seedAllMenus().
+import { seedAllMenus } from "./scripts/seedMenus.js";
 
 try {
-  await mongoose.connect(dbURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 10000,
-  });
-  console.log("✅ DB connected");
+  await connectDB();
   databasestatus = "Connected";
-  await seedFaqMenus();
-  await seedHelpAndGuideMenus();
+  // Seeding is boot-time work. Serverless containers cold-start constantly, so
+  // running it here re-runs both seeds on every scale-out; the deploy pipeline
+  // runs `npm run seed:menus` once per release instead.
+  if (IS_LONG_RUNNING) {
+    await seedAllMenus();
+  }
 } catch (err) {
   console.error("❌ DB Connection Error =>", err);
   if (err instanceof mongoose.Error.MongooseServerSelectionError) {
@@ -427,9 +312,13 @@ app.get("/api", (req, res) => {
 
 
 
-app.get("/*", async (req, res) => {
-  res.sendFile(path.join(__dirname, "/out/admin", "index.html"));
-});
+// SPA fallback for the PM2/FTP deployment only. On Vercel this would turn every
+// unmatched /api path into a 200 + HTML page instead of a real 404.
+if (IS_LONG_RUNNING) {
+  app.get("/*", async (req, res) => {
+    res.sendFile(path.join(__dirname, "/out/admin", "index.html"));
+  });
+}
 
 // ============ ERROR HANDLING ============
 // Use the secure error sanitizer (prevents information leakage)
@@ -449,7 +338,10 @@ app.use(async (err, req, res, _next) => {
     stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined,
   };
 
-  try {
+  if (IS_SERVERLESS) {
+    // Read-only filesystem - hand the record to the platform log drain.
+    console.error("[error]", errorData);
+  } else try {
     let writecontent = [];
     if (fs.existsSync("log/error.html")) {
       const filedata = fs.readFileSync("log/error.html", 'utf8');
@@ -485,7 +377,13 @@ app.use(async (err, req, res, _next) => {
 
 const port = process.env.PORT || 8000;
 
-app.listen(port, () => {
-  console.log(`✅ Server is running on port ${port}`);
-  console.log(`🔒 Security middleware enabled: Helmet, Rate Limiting, Input Validation, CSRF Protection`);
-});
+// Vercel imports this module and drives `app` as a request handler; binding a
+// port there is neither possible nor needed.
+if (IS_LONG_RUNNING) {
+  app.listen(port, () => {
+    console.log(`✅ Server is running on port ${port}`);
+    console.log(`🔒 Security middleware enabled: Helmet, Rate Limiting, Input Validation, CSRF Protection`);
+  });
+}
+
+export default app;

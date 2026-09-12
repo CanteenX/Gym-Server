@@ -33,20 +33,18 @@ import {
   deleteEmailTo,
   listEmailToByParams,
 } from "../../controllers/v1/emailTo.controller.js";
-import fs from "node:fs";
 // ============ SECURITY IMPORTS ============
 import { uploadRateLimiter } from "../../middlewares/rateLimiter.js";
 import { createSecureImageUpload } from "../../middlewares/secureUpload.js";
+import { ensureLocalDir } from "../../config/runtime.js";
 
 const router = express.Router();
 
 // ============ SECURE FILE UPLOAD CONFIGURATION ============
 const descriptionUploadDir = "uploads/cms/email-template/signature";
 
-// Ensure upload directory exists
-if (!fs.existsSync(descriptionUploadDir)) {
-  fs.mkdirSync(descriptionUploadDir, { recursive: true });
-}
+// No-op on the read-only serverless filesystem; uploads go to Blob there.
+ensureLocalDir(descriptionUploadDir);
 
 /**
  * Secure upload middleware for signature images

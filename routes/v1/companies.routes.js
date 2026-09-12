@@ -1,5 +1,4 @@
 import express from "express";
-import fs from "node:fs";
 import {
   createCompanyMaster,
   updateCompanyMaster,
@@ -23,16 +22,15 @@ import {
   allowedCompanyFields
 } from "../../middlewares/inputValidator.js";
 import { createSecureMultiUpload } from "../../middlewares/secureUpload.js";
+import { ensureLocalDir } from "../../config/runtime.js";
 
 const router = express.Router();
 
 // ============ SECURE FILE UPLOAD CONFIGURATION ============
 const logoUploadFolder = "uploads/companyMaster";
 
-// Ensure upload directory exists
-if (!fs.existsSync(logoUploadFolder)) {
-  fs.mkdirSync(logoUploadFolder, { recursive: true });
-}
+// No-op on the read-only serverless filesystem; uploads go to Blob there.
+ensureLocalDir(logoUploadFolder);
 
 /**
  * Secure upload middleware for company logo and favicon

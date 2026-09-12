@@ -1,0 +1,13 @@
+# Keeps the upload small. Note this excludes files from the DEPLOYMENT, so
+# anything server.js imports at runtime must NOT be listed here - Vercel's file
+# tracing can only bundle what was uploaded. scripts/ is deliberately absent:
+# server.js imports scripts/seedMenus.js, and ignoring it produced
+# ERR_MODULE_NOT_FOUND on every request.
+uploads/
+log/
+docs/
+.github/
+out/
+.build/
+test-email.js
+precommit-output.txt

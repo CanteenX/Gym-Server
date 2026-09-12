@@ -1,7 +1,7 @@
 import express from "express";
-import fs from "node:fs";
 import { createSecureMultiUpload } from "../../middlewares/secureUpload.js";
 import { authMiddleware } from "../../middlewares/authMiddleware.js";
+import { ensureLocalDir } from "../../config/runtime.js";
 import {
   createMember,
   updateMember,
@@ -19,9 +19,8 @@ const router = express.Router();
 // ============ SECURE FILE UPLOAD CONFIGURATION ============
 const memberUploadFolder = "uploads/members";
 
-if (!fs.existsSync(memberUploadFolder)) {
-  fs.mkdirSync(memberUploadFolder, { recursive: true });
-}
+// No-op on the read-only serverless filesystem; uploads go to Blob there.
+ensureLocalDir(memberUploadFolder);
 
 const TWO_MB = 2 * 1024 * 1024;
 

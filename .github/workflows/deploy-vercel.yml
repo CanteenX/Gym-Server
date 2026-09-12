@@ -1,0 +1,179 @@
+# Single-domain production deploy.
+#
+# The product is three independent repositories but one Vercel project and one
+# URL. Vercel's own Git integration can only build the repo it is connected to,
+# so the assembly happens here instead: this workflow checks out all three,
+# builds the two front ends, lays them out the way vercel.json expects, and
+# ships a prebuilt deployment.
+#
+# Resulting layout inside the deployment:
+#   /            Next.js static export        (Gym-frontend)
+#   /admin       Vite SPA                     (Gym-Admin)
+#   /api/v1/*    Express serverless function  (Gym-Server, api/index.js)
+#
+# SECURITY: no ${{ }} expression may be interpolated into a `run:` script.
+# GitHub substitutes those textually before the shell parses the line, so a
+# free-text workflow_dispatch input containing $(...) would execute on the
+# runner - where actions/checkout has already persisted GH_PAT into
+# .build/*/.git/config. Pass them through `env:` and read them as shell
+# variables instead.
+
+name: Deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      admin_ref:
+        description: "Gym-Admin ref to build"
+        default: main
+      frontend_ref:
+        description: "Gym-frontend ref to build"
+        default: main
+
+# Never let two production deploys race; a cancelled deploy can leave the
+# project pointing at a half-uploaded build.
+concurrency:
+  group: vercel-production
+  cancel-in-progress: false
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  NODE_VERSION: "22"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Gym-Server
+        uses: actions/checkout@v4
+
+      # GITHUB_TOKEN is scoped to this repository only, so the sibling repos
+      # need a PAT with `repo` access to the CanteenX org.
+      - name: Check out Gym-Admin
+        uses: actions/checkout@v4
+        with:
+          repository: CanteenX/Gym-Admin
+          ref: ${{ inputs.admin_ref || 'main' }}
+          token: ${{ secrets.GH_PAT }}
+          path: .build/admin
+
+      - name: Check out Gym-frontend
+        uses: actions/checkout@v4
+        with:
+          repository: CanteenX/Gym-frontend
+          ref: ${{ inputs.frontend_ref || 'main' }}
+          token: ${{ secrets.GH_PAT }}
+          path: .build/frontend
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build Gym-frontend (static export)
+        working-directory: .build/frontend
+        env:
+          # Empty means same origin: the export is served from the same host as
+          # /api/v1, so the portal issues relative requests and skips CORS.
+          NEXT_PUBLIC_API_URL: ""
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Gym-Admin
+        working-directory: .build/admin
+        env:
+          VITE_API_URL: ""
+          ADMIN_BASE_PATH: "/admin/"
+        run: |
+          # The template still carries peer-dependency conflicts from Velzon.
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+          npm run build
+
+      - name: Assemble public/
+        run: |
+          set -euo pipefail
+          rm -rf public
+          mkdir -p public
+
+          # Frontend first: it owns the domain root. Admin is copied afterwards
+          # so a stray file at the export root can never clobber /admin.
+          cp -r .build/frontend/out/. public/
+          mkdir -p public/admin
+          cp -r .build/admin/build/. public/admin/
+
+          test -f public/index.html       || { echo "::error::frontend export missing index.html"; exit 1; }
+          test -f public/admin/index.html || { echo "::error::admin build missing index.html"; exit 1; }
+          echo "Assembled $(find public -type f | wc -l) files"
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      # Deliberately a REMOTE build (no `vercel build` + --prebuilt).
+      #
+      # The API bundles native modules - bcrypt and sharp. A prebuilt deployment
+      # ships whatever binaries the builder produced, and a runner whose libc or
+      # platform differs from the Vercel runtime yields
+      # "invalid ELF header" / missing-binding crashes on every request. Letting
+      # Vercel install on its own infrastructure removes that entire class of
+      # failure. The front ends are still built here and uploaded in public/,
+      # where vercel.json's placeholder buildCommand leaves them untouched.
+      - name: Deploy to Vercel
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          url=$(vercel deploy --prod --yes)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url"
+
+      # Menu rows used to be seeded on every server boot. A serverless container
+      # cold-starts constantly, so seeding moved here: once per release.
+      - name: Seed menus
+        env:
+          DATABASE: ${{ secrets.DATABASE }}
+        run: |
+          npm ci --omit=dev
+          npm run seed:menus
+
+      - name: Smoke test
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$DEPLOY_URL$1")
+            if [ "$code" = "$2" ]; then
+              echo "ok   $1 -> $code"
+            else
+              echo "::error::$1 returned $code, expected $2"
+              fail=1
+            fi
+          }
+          check "/" 200
+          check "/admin/" 200
+          check "/api" 200
+          exit $fail
+
+      - name: Summary
+        if: always()
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          COMMIT_SHA: ${{ github.sha }}
+          ADMIN_REF: ${{ inputs.admin_ref || 'main' }}
+          FRONTEND_REF: ${{ inputs.frontend_ref || 'main' }}
+        run: |
+          {
+            echo "### Deployment"
+            echo ""
+            echo "- URL: $DEPLOY_URL"
+            echo "- Server commit: $COMMIT_SHA"
+            echo "- Admin ref: $ADMIN_REF"
+            echo "- Frontend ref: $FRONTEND_REF"
+          } >> "$GITHUB_STEP_SUMMARY"

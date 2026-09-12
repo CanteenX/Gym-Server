@@ -16,6 +16,8 @@ import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import path from "node:path";
 import fs, { promises as fsPromises } from "node:fs";
+import { IS_SERVERLESS } from "../config/runtime.js";
+import { persistBuffer } from "../storage/fileStore.js";
 import { fileTypeFromFile, fileTypeFromBuffer } from "file-type";
 
 // Lazy load sharp to handle Node version compatibility
@@ -249,7 +251,9 @@ async function compressToTargetSize(buffer, targetSize, minQuality = 20) {
 function createSecureStorage(options = {}) {
   const { destination = "uploads", useMemory = false } = options;
 
-  if (useMemory) {
+  // Vercel has no writable disk, so diskStorage would throw EROFS mid-stream.
+  // Buffer instead and let persistBuffer() push the bytes to Blob storage.
+  if (useMemory || IS_SERVERLESS) {
     return multer.memoryStorage();
   }
 
@@ -399,15 +403,20 @@ export function createSecureImageUpload(options = {}) {
           }
         }
 
-        // 3. Save to disk with secure filename
-        await ensureUploadDir(destination);
+        // 3. Hand the processed bytes to the storage backend (disk locally,
+        //    Vercel Blob on serverless). filePath is a relative path or an
+        //    absolute URL depending on backend - callers treat it as opaque.
+        if (!IS_SERVERLESS) await ensureUploadDir(destination);
         const secureFilename = generateSecureFilename(
           req.file.originalname,
           finalExt,
         );
-        const filePath = path.join(destination, secureFilename);
-
-        await fsPromises.writeFile(filePath, processedBuffer);
+        const filePath = await persistBuffer(
+          processedBuffer,
+          secureFilename,
+          "image/webp",
+          destination,
+        );
 
         // 4. Update req.file with processed file info
         req.file.filename = secureFilename;
@@ -443,6 +452,48 @@ export function createSecureImageUpload(options = {}) {
  * @param {object} options - Middleware options
  * @returns {Function} Express middleware
  */
+/**
+ * Verifies magic bytes and commits the upload to the storage backend.
+ *
+ * The two single-file factories below accept whatever storage createSecureStorage
+ * picked: a disk path locally, an in-memory buffer on Vercel. Both shapes are
+ * validated the same way and both end up with `req.file.path` pointing at the
+ * stored reference, so controllers never learn which backend ran.
+ *
+ * @returns {Promise<{valid: boolean, error?: string}>}
+ */
+async function finalizeSingleUpload(req, allowedMimes, destination) {
+  const file = req.file;
+
+  if (file.buffer) {
+    const validation = await validateBufferMagicBytes(file.buffer, allowedMimes);
+    if (!validation.valid) return validation;
+
+    // Never re-encode here: this path carries PDFs (member ID proofs), and the
+    // shared compressor would silently turn them into corrupt WebP.
+    const secureFilename = generateSecureFilename(file.originalname);
+    file.path = await persistBuffer(
+      file.buffer,
+      secureFilename,
+      file.mimetype || "application/octet-stream",
+      destination,
+    );
+    file.filename = secureFilename;
+    delete file.buffer;
+    return { valid: true };
+  }
+
+  const validation = await validateMagicBytes(file.path, allowedMimes);
+  if (!validation.valid) {
+    try {
+      await fsPromises.unlink(file.path);
+    } catch (unlinkErr) {
+      console.error("Failed to delete invalid file:", unlinkErr);
+    }
+  }
+  return validation;
+}
+
 export function createSecureDocumentUpload(options = {}) {
   const {
     destination = "uploads",
@@ -485,20 +536,13 @@ export function createSecureDocumentUpload(options = {}) {
       }
 
       try {
-        // Validate magic bytes
-        const validation = await validateMagicBytes(
-          req.file.path,
+        const validation = await finalizeSingleUpload(
+          req,
           ALLOWED_MIMES.documents,
+          destination,
         );
 
         if (!validation.valid) {
-          // Delete the uploaded file
-          try {
-            await fsPromises.unlink(req.file.path);
-          } catch (unlinkErr) {
-            console.error("Failed to delete invalid file:", unlinkErr);
-          }
-
           console.warn(
             `[SECURITY] Magic byte validation failed for document upload`,
           );
@@ -570,19 +614,13 @@ export function createSecureUpload(options = {}) {
       }
 
       try {
-        // Validate magic bytes
-        const validation = await validateMagicBytes(
-          req.file.path,
+        const validation = await finalizeSingleUpload(
+          req,
           allowedMimes,
+          destination,
         );
 
         if (!validation.valid) {
-          try {
-            await fsPromises.unlink(req.file.path);
-          } catch (unlinkErr) {
-            console.error("Failed to delete invalid file:", unlinkErr);
-          }
-
           return res.status(400).json({
             isOk: false,
             status: 400,
@@ -650,7 +688,7 @@ export function createSecureMultiUpload(options = {}) {
       }
 
       try {
-        await ensureUploadDir(destination);
+        if (!IS_SERVERLESS) await ensureUploadDir(destination);
 
         // Process each field's files
         for (const field of fields) {
@@ -685,18 +723,33 @@ export function createSecureMultiUpload(options = {}) {
               finalExt = ".webp";
             }
 
-            // Save with secure filename
             const secureFilename = generateSecureFilename(
               file.originalname,
               finalExt,
             );
-            const filePath = path.join(destination, secureFilename);
-            await fsPromises.writeFile(filePath, processedBuffer);
-
-            // Update file info
             file.filename = secureFilename;
-            file.path = filePath;
             file.size = processedBuffer.length;
+            file.destination = destination;
+
+            if (!compress) {
+              // The caller has opted out of conversion because it needs to make
+              // a per-file decision its own way (members keep PDFs byte-exact
+              // but still want photos as WebP). Storing here would write the
+              // unconverted original as a public object that the caller then
+              // has to delete - two writes plus a delete per upload, and a
+              // silently orphaned full-resolution copy whenever the delete
+              // fails. Hand over the validated bytes and let it store once.
+              file.buffer = processedBuffer;
+              file.storagePending = true;
+              continue;
+            }
+
+            file.path = await persistBuffer(
+              processedBuffer,
+              secureFilename,
+              file.mimetype || "application/octet-stream",
+              destination,
+            );
             delete file.buffer;
           }
         }

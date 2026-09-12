@@ -1,8 +1,8 @@
 import express from "express";
 import multer from "multer";
 import path from "node:path";
-import fs from "node:fs";
 import { authMiddleware } from "../../middlewares/authMiddleware.js";
+import { ensureLocalDir } from "../../config/runtime.js";
 import {
   createBlog,
   updateBlog,
@@ -16,9 +16,7 @@ import {
 const router = express.Router();
 
 const uploadDir = "uploads/blogs";
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+ensureLocalDir(uploadDir);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
