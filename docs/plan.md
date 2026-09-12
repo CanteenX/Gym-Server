@@ -1,7 +1,7 @@
 # Mid City Gym — Feature Plan
 
-Status: **verified 2026-09-13 — internally consistent, ready to execute.
-Nothing has been built.** The execution checklist is in `todo.md` beside this
+Status: **verified 2026-09-13 — internally consistent, all decisions
+resolved, ready to execute. Nothing has been built.** The execution checklist is in `todo.md` beside this
 file; every phase there ends with a code-review and browser-testing gate (§8).
 
 Covers all three repos: `Gym-Server` (API), `Gym-Admin` (staff panel),
@@ -526,16 +526,21 @@ Proposed spec:
 - Do **not** copy the reference's consent checkboxes — those were deliberately
   removed, along with the `confirm()` dialog and the geolocation await.
 
-**One decision still open — the only one in this plan.** The reference gets its
-depth from a *gradient* panel, and the instruction here was to remove gradients
-everywhere. That instruction was about buttons, where a gradient reads as dated;
-on a large brand surface it reads as intentional.
+**Brand panel — RESOLVED: Option A, gradient panel** (owner decision,
+2026-09-13). The reference gets its depth from a *gradient* panel, and the
+earlier instruction was to remove gradients everywhere. That instruction was
+about buttons, where a gradient reads as dated; on a large brand surface it
+reads as intentional, so the two do not conflict.
 
-- **A. Gradient brand panel** — matches the reference, gradients stay banned on
-  buttons and badges. `applyTheme`'s flattening only touches `--btn-*`
-  variables, so it will not strip a panel background. *(Recommended.)*
-- **B. Flat navy panel + pattern only** — keeps "no gradients anywhere" literal;
-  slightly less depth, still a large improvement over flat pale blue.
+- **A. Gradient brand panel** (CHOSEN) — `linear-gradient(135deg, $navy-900,
+  $navy-700)`, matching the reference. Gradients stay banned on buttons and
+  badges; `applyTheme`'s flattening only touches `--btn-*` variables, so it
+  will not strip a panel background. The gradient is written as a static SCSS
+  rule on the login page only — it must **not** be routed through the
+  `themeType` / `CompanyMaster` theme system, or the `solid` default would
+  flatten it.
+- B. Flat navy panel + pattern only — rejected; less depth for no benefit once
+  the button/panel distinction is stated.
 
 **Risk: LOW.** Presentation only, no auth logic touched. The one hazard is
 contrast: white subcopy on a mid-navy panel must clear 4.5:1, so the pattern

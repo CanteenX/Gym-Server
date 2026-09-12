@@ -8,9 +8,9 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
 ---
 
-## Open decision (blocks Phase 6 only)
+## Decisions
 
-- [ ] Phase 6 brand panel: **A** gradient (recommended) or **B** flat navy + pattern
+- [x] Phase 6 brand panel: **A** gradient — chosen by owner 2026-09-13. No open decisions remain.
 
 ---
 
@@ -50,8 +50,7 @@ Harness
 
 ## Phase 6 — Admin login page (3–4 h)
 
-- [ ] Decision A/B recorded above
-- [ ] Left panel: navy surface (`$navy-900 → $navy-700`), low-opacity pattern, white rounded logo tile (~140 px, ~24 px radius)
+- [ ] Left panel: `linear-gradient(135deg, $navy-900, $navy-700)` as a static login-page SCSS rule (not via `themeType`), low-opacity pattern, white rounded logo tile (~140 px, ~24 px radius)
 - [ ] Headline + one line of subcopy; branch chips moved here
 - [ ] Right panel: tinted ground; form in floating white card (12–16 px radius, navy-tinted shadow)
 - [ ] Untouched: navy button, `#email`/`#password-input` ids, `autoComplete`, Enter-to-submit, panel hidden below `lg`
