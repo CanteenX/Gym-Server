@@ -211,13 +211,22 @@ export const getEmployeeRoles = async (req, res) => {
       return res.status(200).json({
         isOk: true,
         message: "No roles assigned yet",
-        data: [],
+        data: null,
       });
     }
 
+    /**
+     * ONE document, not an array.
+     *
+     * There is exactly one EmployeeRoles document per role, and every consumer
+     * reads `data.roles` — MenuContext does `roles?.roles` to build the sidebar.
+     * Returning the raw find() array meant `data.roles` was undefined, so every
+     * non-admin user got an empty menu with no error anywhere: the request was
+     * a clean 200 carrying the right data in the wrong shape.
+     */
     return res.status(200).json({
       isOk: true,
-      data: employeeRoles,
+      data: employeeRoles[0],
     });
   } catch (error) {
     // ✅ Fix 4: console.log → console.error

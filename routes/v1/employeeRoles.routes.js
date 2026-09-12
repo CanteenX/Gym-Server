@@ -57,10 +57,25 @@ router.post(
  *       404:
  *         description: Employee roles not found
  */
+/**
+ * Deliberately NOT behind checkPermission("/employee-roles", "read").
+ *
+ * THE CIRCULAR DEPENDENCY: the admin app calls this on every page load to
+ * discover which menus the signed-in user may see. Gating it on the
+ * "Employee Roles" menu meant that anyone NOT granted that screen — which is
+ * exactly what a Branch Admin is, since Employee Roles and Menu Master are
+ * withheld so they cannot grant themselves the other branch — got a 403 here,
+ * fetchEmployeeRoles returned null, setMenuData was never called, and the
+ * sidebar rendered completely empty. To see the menus you are allowed, you
+ * first had to read a menu you were not allowed.
+ *
+ * authMiddleware still applies, and getEmployeeRoles returns a role's own
+ * permission rows — reading your own permissions is not a privileged act, and
+ * the WRITE routes above remain gated exactly as before.
+ */
 router.get(
   "/employee-roles/:roleId",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/employee-roles", "read"),
   getEmployeeRoles,
 );
 

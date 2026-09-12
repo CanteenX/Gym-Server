@@ -429,7 +429,28 @@ export const loginCompany = async (req, res) => {
         null,
       permissions,
       permissionsUpdatedAt,
-      isSuperAdmin: companyMaster ? companyMaster.isSuperAdmin : false,
+      /**
+       * Super-admin status has TWO sources, and both must be honoured.
+       *
+       * Historically it lived only on CompanyMaster, so this read
+       * `companyMaster ? companyMaster.isSuperAdmin : false` — which silently
+       * returned false for every Employee login. An Employee created through
+       * Setup → Employee with the "Super Admin (both branches)" box ticked
+       * therefore logged in as an ordinary user: the checkbox that grants the
+       * flag is itself gated on having the flag, so ticking it achieved
+       * nothing and the account could never administer anything.
+       */
+      isSuperAdmin: Boolean(
+        companyMaster?.isSuperAdmin || employee?.isSuperAdmin,
+      ),
+      /**
+       * The branch this session is scoped to; null means all branches.
+       *
+       * Without this, scopedBranch() in middlewares/branchScope.js reads
+       * undefined for everyone and concludes "no restriction" — handing every
+       * branch admin both branches, silently and with nothing logged.
+       */
+      branch: employee?.branch ?? null,
     };
 
     return res.status(200).json({
@@ -493,7 +514,12 @@ export const getCurrentUserDetails = async (req, res) => {
       : null;
 
     if (superAdminCompany) {
-      if (employee || !companyMaster.isSuperAdmin) {
+      // `companyMaster?.` — NOT `companyMaster.`. For an Employee login this is
+      // null, and the unguarded read threw a TypeError here. That crashed
+      // /auth/me, which the admin app calls immediately after signing in to
+      // confirm the session — so the login appeared to succeed and then bounced
+      // straight back to the login screen with no error anyone could see.
+      if (employee || !companyMaster?.isSuperAdmin) {
         const userObj = user.toObject ? user.toObject() : user;
         userObj.sidebarBgColor = superAdminCompany.sidebarBgColor;
         userObj.addButtonColor = superAdminCompany.addButtonColor;

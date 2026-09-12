@@ -77,10 +77,17 @@ const EmployeeSchema = new mongoose.Schema(
      * `null` = super admin, i.e. no branch restriction. It is deliberately the
      * default-less absence of a value rather than a magic string like "All",
      * because scopeFilter() turns it straight into an empty Mongo filter.
+     *
+     * The enum moved to the Branch master (models/Branch.js) so opening a
+     * third gym is a data change, not a schema change. Still a STRING, not a
+     * branchId reference: existing staff accounts keep their "Vasna"/"Gotri"
+     * value untouched, and branchScope.js compares that string literally
+     * against the branch on every member/trainer/transaction row. Staff
+     * pickers must read physical branches only (?physicalOnly=true) — nobody
+     * is employed by the "Common" cost bucket.
      */
     branch: {
       type: String,
-      enum: ["Vasna", "Gotri"],
       default: null,
     },
     /**

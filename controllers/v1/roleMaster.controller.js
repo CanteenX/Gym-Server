@@ -28,6 +28,18 @@ export const createRole = async (req, res) => {
     await newRole.save();
     res.status(201).json({ isOk: true, data: newRole });
   } catch (error) {
+    // roleName is uniquely indexed. A duplicate is a normal thing for a user to
+    // do — they cannot see roles they did not create (see listAllRoles), so the
+    // name they are typing may already exist invisibly. Surfacing the raw Mongo
+    // error as a 500 told them the server was broken; it is a 400 with a
+    // sentence naming the clash.
+    if (error?.code === 11000) {
+      return res.status(400).json({
+        isOk: false,
+        status: 400,
+        message: `A role named "${req.body.roleName}" already exists.`,
+      });
+    }
     console.error("Error creating role:", error);
     res.status(500).json({ isOk: false, message: "Internal server error" });
   }
@@ -37,7 +49,16 @@ export const listAllRoles = async (req, res) => {
   try {
     let query = { isActive: true };
 
-    if (req.user.role === "EMPLOYEE") {
+    /**
+     * An ordinary employee sees only the roles they created themselves.
+     *
+     * A SUPER ADMIN must see every role, including the system ones seeded with
+     * `createdBy: null` — otherwise "Branch Admin" is invisible in the Role
+     * dropdown and they cannot assign it, while a uniquely-indexed re-creation
+     * of the same name fails. Super-admin status is read from the session,
+     * never from the request (see middlewares/branchScope.js).
+     */
+    if (req.user.role === "EMPLOYEE" && !req.session?.user?.isSuperAdmin) {
       const safeUserId = typeof req.user.id === "string" ? req.user.id.trim() : "";
       const isValidUser = typeof safeUserId === "string" && /^[0-9a-fA-F]{24}$/.test(safeUserId);
       if (isValidUser) {

@@ -52,10 +52,17 @@ const TransactionSchema = new mongoose.Schema(
      * admin, excluded from a single branch's P&L.
      *
      * Income is never "Common" — a member pays at a branch. Only expenses use it.
+     *
+     * The enum moved to the Branch master (models/Branch.js) so opening a
+     * third gym is a data change, not a schema change; "Common" is now a row
+     * there flagged isPhysical: false. Still a STRING, not a branchId
+     * reference: every historical receipt keeps its "Vasna"/"Gotri"/"Common"
+     * value untouched, which is what keeps past P&L reports stable.
+     * Transaction/expense pickers read the FULL branch list (no
+     * physicalOnly filter) so "Common" stays selectable for shared costs.
      */
     branch: {
       type: String,
-      enum: ["Vasna", "Gotri", "Common"],
       default: "Vasna",
       index: true,
     },

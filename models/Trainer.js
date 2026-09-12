@@ -26,9 +26,13 @@ const TrainerSchema = new mongoose.Schema(
       lowercase: true,
       default: "",
     },
+    // The enum moved to the Branch master (models/Branch.js) so opening a third
+    // gym is a data change, not a schema change. Still a STRING, not a
+    // branchId reference: existing trainers keep their "Vasna"/"Gotri" value
+    // untouched and branchScope.js compares it literally. Trainer pickers must
+    // read physical branches only (?physicalOnly=true).
     branch: {
       type: String,
-      enum: ["Vasna", "Gotri"],
       default: "Vasna",
     },
     notes: {

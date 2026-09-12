@@ -187,10 +187,22 @@ router.put(
  *       404:
  *         description: User not found
  */
+/**
+ * Deliberately NOT behind checkPermission("/company-details", "read").
+ *
+ * Despite the path, this returns the CURRENT USER — AuthContext calls it on
+ * every page load via getCurrentUserDetails() to populate adminData. Gating it
+ * on the "Company Details" menu meant any role without that screen (a Branch
+ * Admin, by design) got a 403; AuthContext treats 401/403 as a dead session,
+ * cleared its state and redirected to login. The sidebar never rendered,
+ * because the app had already thrown itself out before MenuContext ran.
+ *
+ * Reading your own identity is not a privileged act. authMiddleware still
+ * applies, and every company-WRITE route above keeps its permission gate.
+ */
 router.get(
   "/companies/getCompanyDetails",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/company-details", "read"),
   getCurrentUserDetails,
 );
 

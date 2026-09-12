@@ -684,6 +684,16 @@ export const getCurrentUser = async (req, res) => {
       });
     }
 
+    /**
+     * This is a hand-built whitelist, so any field omitted here is invisible to
+     * the entire admin app no matter what the database holds.
+     *
+     * `branch` and `isSuperAdmin` were missing, which broke two things at once:
+     * MenuContext could not tell that an Employee was a super admin (so it fell
+     * through to the per-menu path and rendered an empty sidebar), and nothing
+     * client-side could tell which branch the user belonged to. Both are read
+     * on every page load — they are not optional extras.
+     */
     const dataToSend = {
       _id: user._id,
       employeeName: user.employeeName,
@@ -692,6 +702,8 @@ export const getCurrentUser = async (req, res) => {
       isActive: user.isActive,
       departmentId: user.departmentId,
       roleId: user.roleId,
+      branch: user.branch ?? null,
+      isSuperAdmin: user.isSuperAdmin === true,
     };
 
     const company = await CompanyMaster.findOne({ isSuperAdmin: false });

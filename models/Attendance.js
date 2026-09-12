@@ -51,10 +51,14 @@ const AttendanceSchema = new mongoose.Schema(
      * every past visit with them. Vasna's footfall for last March happened at
      * Vasna, and a join against the member's CURRENT branch would silently
      * rewrite that history.
+     *
+     * The enum moved to the Branch master (models/Branch.js) so opening a
+     * third gym is a data change, not a schema change. Still a STRING, not a
+     * branchId reference — that is exactly what makes the snapshot above work:
+     * the recorded name is a frozen copy, immune to any later master edit.
      */
     branch: {
       type: String,
-      enum: ["Vasna", "Gotri"],
       required: true,
     },
 

@@ -88,7 +88,21 @@ app.use(securityHeaders);
 app.use(additionalSecurityHeaders);
 
 // 2. CORS configuration (more restrictive than before)
-const corsConfig = getCorsConfig();
+/**
+ * getCorsConfig takes an allowlist, and was being called with none — so the
+ * ALLOWED_ORIGINS env var was dead code and only the four hardcoded defaults
+ * were ever honoured. That is not "wide open" (the origin check still runs),
+ * but it does mean a deployed front end on a new domain is silently blocked
+ * with no way to fix it from config.
+ *
+ * Comma-separated, e.g. ALLOWED_ORIGINS=https://app.midcitygym.in,https://midcitygym.in
+ */
+const corsConfig = getCorsConfig(
+  (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
+);
 app.use(cors(corsConfig));
 app.options("*", cors(corsConfig));
 
@@ -131,8 +145,26 @@ app.use("/", express.static(path.join(__dirname, "/out/admin")));
 // 7. Express Session - MongoDB Session Storage (persistent)
 import MongoStore from "connect-mongo";
 
+/**
+ * The session secret signs every staff cookie, so a known value means anyone
+ * can forge a staff session.
+ *
+ * This used to fall back to a hardcoded literal when SESSION_SECRET was unset —
+ * and it WAS unset, so that published string was signing real cookies. A
+ * fallback is worse than no default here: it turns a fatal misconfiguration
+ * into a silent one. Refusing to boot is the safe failure.
+ */
+if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+  console.error(
+    "❌ SESSION_SECRET is missing or shorter than 32 characters.\n" +
+      "   Add a long random value to .env and restart:\n" +
+      "     SESSION_SECRET=<48+ random characters>",
+  );
+  process.exit(1);
+}
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-super-secret-key-change-in-production',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   name: 'sessionId',
@@ -353,6 +385,7 @@ import membershipPlanRoutes from "./routes/v1/membershipPlans.routes.js";
 import bodyMetricRoutes from "./routes/v1/bodyMetrics.routes.js";
 import attendanceRoutes from "./routes/v1/attendance.routes.js";
 import workoutRoutes from "./routes/v1/workout.routes.js";
+import branchRoutes from "./routes/v1/branches.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -379,6 +412,7 @@ app.use("/api/v1", membershipPlanRoutes);
 app.use("/api/v1", bodyMetricRoutes);
 app.use("/api/v1", attendanceRoutes);
 app.use("/api/v1", workoutRoutes);
+app.use("/api/v1", branchRoutes);
 
 console.log("✅ V1 API routes loaded");
 

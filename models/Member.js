@@ -97,9 +97,14 @@ const MemberSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    // The enum moved to the Branch master (models/Branch.js) so opening a third
+    // gym is a data change, not a schema change. Still a STRING, not a
+    // branchId reference: every existing member already carries "Vasna" or
+    // "Gotri", and branchScope.js matches that string against the session's
+    // branch — keeping it means zero migration. Member pickers must read
+    // physical branches only (?physicalOnly=true).
     branch: {
       type: String,
-      enum: ["Vasna", "Gotri"],
       default: "Vasna",
     },
 
