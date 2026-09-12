@@ -1,3 +1,4 @@
+import { getClientIp } from "../../utils/clientIp.js";
 import EmployeeModels from "../../models/Employee.js";
 import CompanyMaster from "../../models/CompanyMaster.js";
 import EmployeeRoles from "../../models/EmployeeRoles.js";
@@ -513,11 +514,7 @@ export const loginEmployee = async (req, res) => {
   try {
     const { email, password } = req.body;
     const safeEmail = typeof email === "string" ? email.trim() : "";
-    const ipAddress =
-      req.ip ||
-      req.headers["x-forwarded-for"] ||
-      req.connection?.remoteAddress ||
-      "unknown";
+    const ipAddress = getClientIp(req);
 
     const employee = await EmployeeModels.findOne({ emailOffice: safeEmail })
       .populate("departmentId")

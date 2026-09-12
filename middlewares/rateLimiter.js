@@ -14,6 +14,8 @@
 
 import rateLimit from 'express-rate-limit';
 
+import { getClientIp } from '../utils/clientIp.js';
+
 /**
  * Limits are environment-aware.
  *
@@ -44,13 +46,7 @@ const limitFrom = (envVar, prodDefault, devDefault) => {
  * @param {Object} req - Express request object
  * @returns {string} Client IP address
  */
-const getClientIP = (req) => {
-    return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-        req.headers['x-real-ip'] ||
-        req.ip ||
-        req.connection?.remoteAddress ||
-        'unknown';
-};
+const getClientIP = (req) => getClientIp(req);
 
 /**
  * Custom key generator for rate limiting

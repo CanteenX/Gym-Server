@@ -1,3 +1,4 @@
+import { getClientIp } from "../../utils/clientIp.js";
 import CompanyMasterModels from "../../models/CompanyMaster.js";
 import EmployeeModels from "../../models/Employee.js";
 import bcrypt from "bcrypt";
@@ -11,15 +12,6 @@ import {
 import EmployeeRoles from "../../models/EmployeeRoles.js";
 
 
-// ✅ Helper: get IP address
-const getIpAddress = (req) => {
-  return (
-    req.ip ||
-    req.headers["x-forwarded-for"] ||
-    req.connection?.remoteAddress ||
-    "unknown"
-  );
-};
 
 // ✅ Helper: get client location
 const getClientLocation = (req, clientLatitude, clientLongitude) => {
@@ -340,7 +332,7 @@ export const loginCompany = async (req, res) => {
     }
 
     const sanitizedEmail = email.trim().toLowerCase();
-    const ipAddress = getIpAddress(req);
+    const ipAddress = getClientIp(req);
     const clientLocation = getClientLocation(req, clientLatitude, clientLongitude);
 
     console.log("Login attempt received");

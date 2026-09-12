@@ -307,10 +307,19 @@ feature bugs.
 - `Gym-frontend`: remove `output: "export"`; set `images.unoptimized` back to
   default; add the `/api/:path*` rewrite to project 2's internal URL and the
   `/admin/:path*` SPA fallback rewrite (moves here from `Gym-Server/vercel.json`).
-- Vercel: create project 1 from `Gym-frontend` (Next preset, owns
-  `mid-city-gym.vercel.app`); project 2 keeps `Gym-Server` with
-  `regions: ["bom1"]`, framework null, `api/index.js` only; remove
-  `outputDirectory: public` and the static rewrites from its `vercel.json`.
+- Vercel: **repurpose the existing project** as project 1 rather than creating a
+  new one. `mid-city-gym.vercel.app` is Vercel's auto-assigned hostname for the
+  project *named* `mid-city-gym`, so it cannot be handed to a new project
+  without renaming and a window where the public URL 404s. Switch its framework
+  preset to `nextjs` and **clear its `buildCommand` and `outputDirectory`
+  overrides** — a project-level override beats `vercel.json`, so `next build`
+  would never run. It keeps its id, so `VERCEL_PROJECT_ID` is unchanged.
+  Create project 2 (`mid-city-gym-api`) for `Gym-Server` with
+  `regions: ["bom1"]`, framework null, `api/index.js` only, and remove the
+  static `/admin` rewrites from its `vercel.json`. Keep a throwaway
+  `outputDirectory` there: with `framework: null` and no output directory,
+  Vercel's "Other" preset serves the repository root, which would publish the
+  committed `.env`.
 - Env: `ALLOWED_ORIGINS` on project 2 stays the public domain; project 1 gets
   `API_INTERNAL_URL` for server-side fetches and `NEXT_PUBLIC_API_URL=""` for
   the browser.

@@ -1,65 +1,94 @@
-# Vercel deployment (single domain)
+# Vercel deployment (single domain, two projects)
 
 **Live: https://mid-city-gym.vercel.app**
 
-Three repositories, one Vercel project, one URL.
+Three repositories, **two** Vercel projects, one URL.
 
 ```
-mid-city-gym.vercel.app
-├── /            Next.js static export        Gym-frontend
-├── /admin       Vite SPA                     Gym-Admin
-└── /api/v1/*    Express serverless function  Gym-Server  (api/index.js)
+mid-city-gym.vercel.app                    project: mid-city-gym   (Gym-frontend)
+├── /            Next.js app, dynamic/ISR  Gym-frontend
+├── /admin       Vite SPA in public/admin  Gym-Admin  (assembled by CI)
+└── /api/v1/*    ---- rewritten to ---->   project: mid-city-gym-api (Gym-Server)
+                                           Express serverless, api/index.js
 ```
 
-Because all three are served from one origin, the admin's `express-session`
-cookie is first-party and the member portal issues relative requests, so there
-is no CORS configuration to maintain on this deployment.
+The browser only ever sees one origin, so the admin's `express-session` cookie
+stays first-party and the member portal issues relative requests: there is no
+CORS configuration to maintain on this deployment, and no preflight on any
+admin request. The proxy hop is the price.
 
-## Status
+## Why there are two projects
 
-Already done (Vercel project `nventra01-6027s-projects/mid-city-gym`):
+It used to be one: a single project served a folder of static files (the Next
+**export**, plus the admin SPA) alongside one Express function.
 
-- Project created and linked; `.vercel/project.json` holds the ids.
-- Blob store `mid-city-gym-uploads` created and connected, so
-  `BLOB_READ_WRITE_TOKEN` is injected into all three environments.
-- Production env vars set: `DATABASE`, `SESSION_SECRET` (freshly generated -
-  see below), `ADMIN_JWT_SECRET_KEY`, `EMPLOYEE_JWT_SECRET_KEY`,
-  `MEMBER_JWT_SECRET_KEY`, `JWT_EXPIRY`, `RATE_LIMIT_*`, `AUTH_RATE_LIMIT_MAX`.
-- Vercel's own Git integration is **disabled** (`git.deploymentEnabled: false`
-  in `vercel.json`). It auto-connected on link and would otherwise build the
-  repo with no `public/` assembled, shipping an empty site alongside CI.
-- GitHub secrets set on `CanteenX/Gym-Server`: `VERCEL_ORG_ID`,
-  `VERCEL_PROJECT_ID`, `DATABASE`.
+The site then had to become dynamic - the CMS work requires an admin edit to be
+live in seconds without a rebuild, which a static export cannot do. A dynamic
+Next app needs its own runtime for routing, RSC payloads and image
+optimization, so it cannot be a folder of static files inside another project.
 
-Still required before the workflow can run:
+The split was done the cheap way round, and the ordering matters if you ever
+redo it:
 
-| Secret | How to get it |
-|---|---|
-| `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens, **signed in as `nventra01@gmail.com`**. This, not anyone's local CLI login, decides where CI deploys. |
-| `GH_PAT` | PAT with `repo` scope on the `CanteenX` org. Needed in **all three** repos: here to clone the siblings, and in each sibling to dispatch a deploy. |
+- The **existing** project (`mid-city-gym`, id `prj_w6f7sEft…`) was *repurposed*
+  as the front end. It therefore keeps both its project id and its
+  `*.vercel.app` hostname.
+- A **new** project (`mid-city-gym-api`, id `prj_pjpOziG9…`) was created for the
+  API.
 
-`SESSION_SECRET` was absent from `.env` entirely, which is why `server.js` was
-falling back to the string hardcoded at `server.js:135` - so production was
-running on a secret committed to the repository. The Vercel value is a fresh
-48-byte random one. **Rotate it on the PM2 host too**, and treat the old one as
-compromised; every existing staff session signed with it stays valid until then.
+Doing it the other way - new project for the front end - does not work cleanly:
+`mid-city-gym.vercel.app` is Vercel's auto-assigned hostname for the project
+*named* `mid-city-gym` and cannot simply be moved, so it would have meant
+renaming the project and living with a window where the public URL 404s.
 
-## Why the pipeline assembles the build
+A consequence worth knowing: the `VERCEL_PROJECT_ID` secret still means *the
+front end*. `Gym-Server`'s workflow deliberately reads `VERCEL_API_PROJECT_ID`
+instead, because reusing `VERCEL_PROJECT_ID` there would deploy the API over the
+public site.
 
-Vercel's Git integration builds the one repository it is connected to. These are
-three independent repos, so `.github/workflows/deploy-vercel.yml` in
-**Gym-Server** checks out all three, builds the two front ends, lays them out
-under `public/`, and deploys. `main` in Gym-Server is the release trigger;
-`workflow_dispatch` lets you pin a different admin/frontend ref.
+## Project settings
 
-The deploy is a **remote** build (`vercel deploy --prod`, not
-`vercel build` + `--prebuilt`). The API bundles native modules - `bcrypt` and
-`sharp` - and a prebuilt deployment ships whatever binaries the builder
-produced. Building on Windows failed outright with a bcrypt binding error, and
-any runner whose platform or libc differs from the Vercel runtime risks the
-same. Letting Vercel install on its own infrastructure removes that whole class
-of failure; the front ends are still built in CI and uploaded in `public/`,
-which the placeholder `buildCommand` leaves untouched.
+`mid-city-gym` (front end) — framework `nextjs`, no `buildCommand` or
+`outputDirectory` override. Both overrides existed for the old assembled-`public/`
+layout and **had to be cleared**: a project-level override beats `vercel.json`,
+so `next build` would never have run.
+
+`mid-city-gym-api` (API) — `framework: null`, `regions: ["bom1"]`.
+
+`bom1` is not cosmetic. Atlas is in Mumbai and the function defaulted to `iad1`,
+which put a ~1.4 s floor under every request that touched the database.
+
+The API's `vercel.json` sets a throwaway `buildCommand` that creates
+`public/index.txt` plus `outputDirectory: "public"`. That looks redundant and is
+not: with `framework: null` **and no output directory**, Vercel's "Other" preset
+serves the *repository root* as static output, which would publish the committed
+`.env` - live Mongo URI and every JWT secret - at the API project's URL. The
+empty `public/` gives it nothing to serve. The API workflow's smoke test asserts
+this stays true.
+
+## Environment variables
+
+All runtime env vars live on **`mid-city-gym-api`**: `DATABASE`,
+`SESSION_SECRET`, `ADMIN_JWT_SECRET_KEY`, `EMPLOYEE_JWT_SECRET_KEY`,
+`MEMBER_JWT_SECRET_KEY`, `JWT_EXPIRY`, `RATE_LIMIT_*`, `AUTH_RATE_LIMIT_MAX`,
+`ALLOWED_ORIGINS`, `BLOB_READ_WRITE_TOKEN`.
+
+`ALLOWED_ORIGINS` is `https://mid-city-gym.vercel.app` - the **public** origin,
+not the API's own hostname. That is what the proxy forwards as `Origin`, and
+`getCorsConfig`'s `selfOrigins` (built from `VERCEL_PROJECT_PRODUCTION_URL`)
+only knows the API project's hostname, so the public origin has to be listed
+explicitly.
+
+On **`mid-city-gym`** (front end) only `API_INTERNAL_URL` matters. It is read at
+**build** time, because `rewrites()` in `next.config.ts` is evaluated when the
+app is compiled - changing it needs a redeploy, not just an env var edit.
+
+`NEXT_PUBLIC_API_URL` is deliberately **not set**: `src/lib/api.ts` already
+defaults to `""` (same origin) in production. Setting it invites the
+empty-string-becomes-`""` quoting bug that has bitten this project before.
+
+The old server env vars are still present on the front-end project. Leave them:
+a `vercel rollback` to a pre-split deployment would need them.
 
 ## Serverless constraints this codebase had to satisfy
 
@@ -84,62 +113,126 @@ cannot be reverted:
   `ERR_MODULE_NOT_FOUND` on every request.
 - **No SPA catch-all.** `app.get("/*")` is gated off, or unmatched API paths
   return 200 + HTML instead of a real 404.
+- **`trust proxy` is still required, and is now under-counting hops.** The API
+  sits behind Vercel's edge *and* the front end's rewrite, so
+  `X-Forwarded-Proto` is what tells express-session it may send a `Secure`
+  cookie. Without it login returns 200 and sets no cookie at all. That part is
+  unaffected by the extra hop, because the protocol stays `https` all the way.
+
+  `req.ip` is not. Express derives it from the hop count, which is set to `1`
+  for the single-edge topology, so with the proxy in front it resolves to an
+  intermediate infrastructure address rather than the visitor. Both login
+  controllers used to read `req.ip` first when writing `LoginAttempt` and
+  calling `geoip.lookup()`, which would have recorded brute-force attempts
+  against Vercel instead of the attacker. They now use `utils/clientIp.js`
+  (left-most `X-Forwarded-For`), which is hop-count independent - so changing
+  `trust proxy` cannot silently move the answer again. Lockout itself is keyed
+  on the user, not the IP, so enforcement was never affected.
 
 ## Menu seeding
 
 `seedFaqMenus` / `seedHelpAndGuideMenus` used to run inline on every server
 boot. A serverless container cold-starts constantly, so they now live in
-`scripts/seedMenus.js`: the PM2 process still calls them at boot, and the
-workflow runs `npm run seed:menus` once per release. Both are idempotent.
+`scripts/seedMenus.js`: the PM2 process still calls them at boot, and
+`npm run seed:menus` runs them by hand. Both are idempotent.
 
 ## What triggers a deploy
 
-Any of the three repos. Pushing to `main` on Gym-Admin or Gym-frontend runs a
-tiny `trigger-deploy.yml` in that repo which sends a `repository_dispatch` to
-Gym-Server, carrying the pushed SHA so the deploy builds exactly that commit
+```
+push Gym-frontend/main  ------------------->  Gym-frontend: Deploy to Vercel
+push Gym-Admin/main     --dispatch-------->     admin_ref = pushed SHA
+push Gym-Server/main    ------------------->  Gym-Server:  Deploy API to Vercel
+```
+
+The front end and the API deploy **independently** now. A push to Gym-Server no
+longer rebuilds the site, and a push to Gym-frontend no longer redeploys the API.
+
+`Gym-Admin` has no Vercel project of its own; pushing it dispatches to
+`Gym-frontend`, carrying the pushed SHA so the deploy builds exactly that commit
 rather than whatever `main` has become by the time it runs.
 
-```
-push Gym-Server/main     -------------------> Deploy to Vercel
-push Gym-Admin/main      --dispatch-------->    admin_ref    = pushed SHA
-push Gym-frontend/main   --dispatch-------->    frontend_ref = pushed SHA
-manual workflow_dispatch -------------------> refs you choose
-```
-
 Deploys are queued, not cancelled (`cancel-in-progress: false`), so two pushes
-landing close together both reach production instead of one discarding the
-other.
+landing close together both reach production instead of one discarding the other.
 
-Because of this, `GH_PAT` must exist in **all three** repositories: Gym-Server
-uses it to clone the siblings, and the siblings use it to dispatch, since a
-repository's own `GITHUB_TOKEN` cannot reach another repository.
+`GH_PAT` is needed in `Gym-frontend` (to clone Gym-Admin) and in `Gym-Admin` (to
+dispatch), since a repository's own `GITHUB_TOKEN` cannot reach another
+repository.
+
+### Secrets
+
+| Repo | Secrets |
+|---|---|
+| `Gym-frontend` | `GH_PAT`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `VERCEL_TOKEN` |
+| `Gym-Server` | `VERCEL_ORG_ID`, `VERCEL_API_PROJECT_ID`, `VERCEL_TOKEN` |
+| `Gym-Admin` | `GH_PAT` |
 
 ## Running it
 
-Push to `main`, or run the workflow manually. It builds, deploys, seeds menus,
-then smoke tests `/`, `/admin/` and `/api`, failing the run if any is not 200.
+Push to `main`, or run either workflow manually.
+
+The front-end workflow builds the admin panel, gates on `npm run check:icons`,
+assembles `public/admin/`, deploys, then smoke tests `/`, `/admin`, `/admin/`, a
+real `/admin/assets/*.js`, the icon font, and `/api` for
+`"database":"Connected"`.
+
+**`/admin/` answers 308, not 200.** Next redirects the trailing-slash form
+before rewrites run. Browsers follow it, so the smoke test uses `curl -sL` and
+asserts the final status; asserting a literal 200 fails a healthy deploy.
 
 To reproduce a deploy by hand:
 
 ```bash
-cd ../Gym-frontend && NEXT_PUBLIC_API_URL="" npm run build
-cd ../Gym-Admin    && npm run build   # /admin/ is the default; do NOT pass
-                                   # ADMIN_BASE_PATH on Git Bash - MSYS rewrites
-                                   # it to a Windows path and the SPA ships with
-                                   # unreachable asset URLs (blank page).
-cd ../Gym-Server
-rm -rf public && mkdir -p public
-cp -r ../Gym-frontend/out/. public/
-mkdir -p public/admin && cp -r ../Gym-Admin/build/. public/admin/
+cd Gym-Admin && npm run check:icons && npm run build
+#   /admin/ is the default; do NOT pass ADMIN_BASE_PATH on Git Bash - MSYS
+#   rewrites it to a Windows path and the SPA ships with unreachable asset URLs.
+
+cd ../Gym-frontend
+rm -rf public/admin && mkdir -p public/admin
+cp -r ../Gym-Admin/build/. public/admin/
 vercel deploy --prod          # remote build; do NOT use --prebuilt
+
+cd ../Gym-Server
+vercel deploy --prod          # deploys the API project only
 ```
+
+`Gym-Admin/build/` is committed, so `git checkout -- build/ && git clean -fdq build/`
+afterwards to keep the diff clean.
+
+### Verifying a deploy
+
+`Gym-Admin/scripts/e2e/gate.mjs` is the browser half of the plan's per-phase
+gate. It is a **gate**, not a report: every check sets a non-zero exit code.
+
+```bash
+cd Gym-Admin
+SA_EMAIL=... SA_PASS=... npm run e2e -- --base https://mid-city-gym.vercel.app
+```
+
+It can also be pointed at a local build (`--base http://localhost:3000`), which
+is how the split was verified before it went to production - the rewrites proxy
+to the real API project and `http://localhost:3000` is already in
+`getCorsConfig`'s default allowlist, so login works end to end with no risk to
+the live site.
+
+It does **not** retry a failed login: three failures lock the account for 24h.
+
+### Rolling back
+
+The front end and API roll back independently:
+
+```bash
+vercel rollback <deployment-url>     # or promote a previous one in the dashboard
+```
+
+The pre-split monolith deployments are still in the front-end project's history
+and still work, because that project retains the old env vars.
 
 ## Known gaps
 
 - **Existing uploads do not migrate themselves.** Files on the VPS under
-  `uploads/` are referenced by relative paths in Mongo. On Vercel those resolve
-  to `/uploads/...` on the new domain, where nothing serves them. Either copy
-  them into Blob and rewrite the rows, or keep the old host serving them.
+  `uploads/` are referenced by relative paths in Mongo. `/uploads/*` is proxied
+  to the API project for parity, but nothing there serves them either. Either
+  copy them into Blob and rewrite the rows, or keep the old host serving them.
 - **The Blob store is public.** Member photos and ID proofs are reachable by
   anyone with the URL, guessable only by UUID. This matches the current disk
   deployment, which serves `/uploads/**` publicly - but it is worth revisiting
@@ -148,8 +241,10 @@ vercel deploy --prod          # remote build; do NOT use --prebuilt
 - **Deleting a member's file leaves the Blob object behind.**
   `deleteFileIfExists` in `company.controller.js` tests `fs.existsSync` on what
   is now a URL, so it silently does nothing.
-- **Unknown paths return 200 with the 404 page** (soft 404) rather than a 404
-  status. Cosmetic, but it affects search engines.
+- **The API project is publicly reachable** at `mid-city-gym-api.vercel.app`.
+  CORS and auth are the gate, not network isolation; the plan calls it an
+  "internal" URL but Vercel gives it a public hostname. Vercel's Deployment
+  Protection covers preview URLs, not the production alias.
 - **The legacy FTP/PM2 target serves the admin build at the domain root**, not
   `/admin`. If you keep that deployment alive, build it with
   `ADMIN_BASE_PATH=/`, or every asset 404s.

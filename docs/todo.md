@@ -14,37 +14,66 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
 ---
 
-## Phase 0 — Deployment split (4–6 h)
+## Phase 0 — Deployment split (4–6 h) — IN PROGRESS
+
+**Deviation from the plan, deliberate.** The plan said create a *new* project for
+the front end and give it the domain. `mid-city-gym.vercel.app` is Vercel's
+auto-assigned hostname for the project *named* `mid-city-gym` and cannot be
+moved, so that path meant renaming and a window where the public URL 404s.
+Instead: the **existing** project was repurposed as the front end (keeping both
+its id and its hostname, so `VERCEL_PROJECT_ID` did not even change) and a new
+`mid-city-gym-api` was created for the API. See `DEPLOYMENT-VERCEL.md`.
 
 Frontend
-- [ ] Remove `output: "export"` from `next.config.ts`; remove `images.unoptimized`
-- [ ] Add `/api/:path*` rewrite → project 2 internal URL
-- [ ] Add `/admin/:path*` → `/admin/index.html` SPA fallback rewrite
-- [ ] `API_INTERNAL_URL` env (server-side fetches) and `NEXT_PUBLIC_API_URL=""` (browser)
-- [ ] Confirm `fileUrl()` still passes absolute Blob URLs through
+- [x] Remove `output: "export"` from `next.config.ts`; remove `images.unoptimized`
+- [x] Add `/api/:path*` rewrite → API project (also `/api-docs*`, `/uploads/*`)
+- [x] Add `/admin` **and** `/admin/:path*` → `/admin/index.html` (in `afterFiles`, so real assets win). Both sources are needed: Next does not serve `public/admin/index.html` at bare `/admin`
+- [x] `API_INTERNAL_URL` set on the front-end project. `NEXT_PUBLIC_API_URL` deliberately **not** set — `src/lib/api.ts` already defaults to `""` in production, and setting it invites the empty-string quoting bug
+- [x] Confirm `fileUrl()` still passes absolute Blob URLs through
 
 Vercel
-- [ ] Create project 1 from `Gym-frontend` (Next preset); attach `mid-city-gym.vercel.app`
-- [ ] Project 2 (`Gym-Server`): keep `regions: ["bom1"]`, `api/index.js` only; remove `outputDirectory: public` and static rewrites from `vercel.json`
-- [ ] Project 2 env: `ALLOWED_ORIGINS` = public domain; `trust proxy` stays on
-- [ ] Remove `public/` assembly from `Gym-Server` (`.gitignore` entry, `.vercelignore`)
+- [x] Front-end project = existing `mid-city-gym` (`prj_w6f7sEft…`), framework switched to `nextjs`, `buildCommand`/`outputDirectory` overrides **cleared** (a project-level override beats `vercel.json`, so `next build` would never have run)
+- [x] API project = new `mid-city-gym-api` (`prj_pjpOziG9…`), `regions: ["bom1"]`, all 11 runtime env vars copied
+- [x] API `vercel.json`: static rewrites for `/admin` removed; a throwaway `public/` **kept on purpose** — with `framework: null` and no output dir, Vercel serves the repo root and would publish the committed `.env`
+- [x] API env: `ALLOWED_ORIGINS` = public domain (already correct); `trust proxy` unchanged
+- [x] `public/` is untracked and gitignored in `Gym-Server` — nothing to unwind
+- [x] API project verified standalone: `/api` → `"database":"Connected"`, protected route → 401, `.env`/`server.js`/`package.json` not served as source
 
 CI
-- [ ] `Gym-frontend` workflow: build `Gym-Admin` → `public/admin/`, run `check:icons`, deploy project 1
-- [ ] `Gym-Server` workflow: deploy project 2 only
-- [ ] Repoint `repository_dispatch` in `Gym-Admin` → `Gym-frontend`
-- [ ] Smoke test targets the **public** domain: `/`, `/admin`, `/admin/`, `/api`, icon font
-- [ ] No `${{ }}` inside any `run:` block (re-run the YAML check)
+- [x] `Gym-frontend` workflow: build `Gym-Admin` → `public/admin/`, `check:icons` gate, deploy front-end project, smoke test
+- [x] `Gym-Server` workflow: deploys the API project **only**, via `VERCEL_API_PROJECT_ID` (reusing `VERCEL_PROJECT_ID` there would deploy the API over the public site)
+- [x] Repoint `repository_dispatch` in `Gym-Admin` → `Gym-frontend`; delete the now-obsolete `Gym-frontend/trigger-deploy.yml`
+- [x] Smoke test targets the **public** domain: `/`, `/admin`, `/admin/`, a real `/admin/assets/*.js`, `/api` asserting `"database":"Connected"`, icon font
+- [x] `/admin/` answers **308**, not 200 — Next redirects trailing slashes before rewrites. Smoke test uses `curl -sL` and asserts the final status
+- [x] No `${{ }}` inside any `run:` block (checked programmatically)
+- [x] Secrets: `VERCEL_API_PROJECT_ID` on `Gym-Server`; `VERCEL_ORG_ID`/`VERCEL_PROJECT_ID`/`VERCEL_TOKEN` on `Gym-frontend`
 
 Harness
-- [ ] Move Playwright scripts into `Gym-Admin/scripts/e2e/`; `npm run e2e` works against a URL arg
+- [x] `Gym-Admin/scripts/e2e/gate.mjs` + `npm run e2e -- --base <url>`; `playwright` added as a devDependency; `.e2e-out/` gitignored
+- [x] Rewritten as a real gate. The ~30 predecessor scripts had **no assertions at all** — every one printed and exited 0, so CI could never have used them
 
 **Gate**
-- [ ] Code review — CRITICAL/HIGH fixed
-- [ ] Browser: staff login sets `sessionId` through the rewrite; `/admin` and `/admin/` both render; member portal login works; 1440 + 390 px screenshots
-- [ ] Browser: zero page errors, zero unnamed controls on login/dashboard/members
-- [ ] Live smoke green on public domain; bundle hash changed; CDN given 2 min
-- [ ] `/menus/by-groups` and `/auth/me` still ≈ 250 ms (bom1 colocation intact)
+- [x] Code review — two parallel adversarial reviews; 0 CRITICAL, 6 HIGH, 7 MEDIUM, 5 LOW. All HIGH fixed:
+  - [x] `set -euo pipefail` + `grep -o` with no match **aborted the smoke step at that line** — the run still went red but lost its own `::error::` diagnostic and skipped the icon-font check and `exit $fail`. Verified empirically, fixed with `|| true`
+  - [x] No preflight on the deploy target. With `VERCEL_API_PROJECT_ID` unset and no committed `.vercel/` link, `vercel deploy --yes` **provisions a brand-new project** named after the checkout dir and deploys there — green CI, release lands nowhere. Added a fail-fast step to both workflows
+  - [x] `req.ip` was the first choice for `LoginAttempt` + `geoip` in both login controllers, but it derives from the `trust proxy` hop count (1) and the split adds a hop — so the audit trail would record Vercel infrastructure instead of the visitor. Extracted `utils/clientIp.js` (left-most `x-forwarded-for`, hop-count independent) and wired all three capture sites to it, which also removed two helpers that disagreed
+  - [x] Gate: the SPA-mount phase **collected page errors and discarded the buffer** — only a literally empty `#root` could fail it
+  - [x] Gate: per-route `drain()` created a window (checks + screenshot + loop idle) in which events were attributed to the *next* route. Events are now tagged with the active route at capture time and judged once at the end
+  - [x] Gate: console + response listeners double-counted the same failed request, and the browser's own `Failed to load resource` echo carries no status — so a routine anonymous 401 on `/auth/verify-session` read as fatal. Added a severity split (pageerror / 5xx / requestfailed fatal; 401/403/404 notes) and drop the browser echo the response listener already covers
+- [x] MEDIUM/LOW addressed: `.env*` and `.build` excluded from the Vercel uploads (defense in depth, not relying on routing); `beforeFiles` `/api` shadowing of future Route Handlers documented in `next.config.ts`; the inaccurate "both `/admin` rules required" comment corrected (`:path*` does match zero segments — the rule is kept as belt-and-braces, not necessity); `aria-labelledby` now requires non-empty text; `effectiveBg` walks up to `<html>`
+- [x] Reviewer confirmed independently: cookie survives the proxy host-scoped to the public domain, `sameSite: lax` still correct, and `*.vercel.app` on the Public Suffix List means the session cookie can never reach the API project's own hostname
+- [x] Contrast remains **report-only by default** (`--enforce-contrast` to bite) — a deliberate, documented hole, because the Velzon template ships pre-existing low-contrast greys
+- [x] Browser (local build, `--base http://localhost:3000`): **GATE PASSED**, 33 checks, 0 failures — staff login 1086 ms, `sessionId` httpOnly/sameSite=Lax set through the rewrite, `/admin` and `/admin/` both mount, menus load, 1440 + 390 px screenshots
+- [x] Browser: zero page errors across 3 marketing + 9 admin routes; unnamed form controls 0; nameless buttons 0; no overflow at 390 px
+- [x] Gate re-run after the review fixes: **GATE PASSED**, 34 checks, exit 0. The overflow detector was proved to have teeth (injected 900px element → detected; wide content inside `overflow-x:auto` → correctly ignored)
+- [ ] **Live smoke green on public domain** — BLOCKED: production deploy not yet run
+- [ ] `/menus/by-groups` and `/auth/me` still ≈ 250 ms (bom1 colocation intact) — measure after the live deploy
+- [ ] **Confirm the recorded login IP is the visitor's**, not Vercel infrastructure. Log in on the live site, then read the newest `LoginAttempt.ipAddress`. `x-forwarded-for[0]` is the best signal available in-process, but whether the API's edge preserves or overwrites that header across the proxy hop could not be determined without the live topology. If it comes back as infrastructure, the fix is for the front end to forward the original explicitly in a custom header
+
+Pre-existing defects found by the new gate and fixed here (not introduced by Phase 0):
+- [x] 14 form controls with no accessible name (search inputs on members/trainers/membership-plans/employee/cash-flow, the trainers branch filter, 9 unassociated `Label`/`Input` pairs on profile)
+- [x] 1 nameless icon-only button (cash-flow refresh)
+- [ ] Employee-roles placeholder text at 3.95:1 (needs 4.5:1) — reported by the gate, not enforced; fix when that screen is next touched
 
 ---
 

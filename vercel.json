@@ -4,7 +4,7 @@
   "regions": [
     "bom1"
   ],
-  "buildCommand": "echo 'Static assets are assembled by CI into public/ before vercel build'",
+  "buildCommand": "mkdir -p public && printf 'mid-city-gym api\\n' > public/index.txt",
   "outputDirectory": "public",
   "functions": {
     "api/index.js": {
@@ -29,10 +29,6 @@
     {
       "source": "/api-docs/(.*)",
       "destination": "/api/index.js"
-    },
-    {
-      "source": "/admin/:path*",
-      "destination": "/admin/index.html"
     }
   ],
   "git": {

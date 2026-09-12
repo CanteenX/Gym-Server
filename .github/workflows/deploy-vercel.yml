@@ -1,158 +1,85 @@
-# Single-domain production deploy.
+# Production deploy of the API only.
 #
-# The product is three independent repositories but one Vercel project and one
-# URL. Vercel's own Git integration can only build the repo it is connected to,
-# so the assembly happens here instead: this workflow checks out all three,
-# builds the two front ends, lays them out the way vercel.json expects, and
-# deploys.
+# This repo used to assemble and deploy all three projects into a single Vercel
+# project. It no longer does: the site became a dynamic Next.js app, which needs
+# its own runtime and cannot be a folder of static files inside another project.
+# The deployment is now split, and the front end owns the domain:
 #
-# Resulting layout inside the deployment:
-#   /            Next.js static export        (Gym-frontend)
-#   /admin       Vite SPA                     (Gym-Admin)
-#   /api/v1/*    Express serverless function  (Gym-Server, api/index.js)
+#   mid-city-gym      (Gym-frontend)  Next.js, dynamic/ISR  -> owns the domain
+#   mid-city-gym-api  (this repo)     Express serverless    -> proxied at /api/*
+#
+# So a push here deploys the API and nothing else. Building the front ends now
+# lives in CanteenX/Gym-frontend.
+#
+# Deliberately a REMOTE build (no `vercel build` + --prebuilt). The API bundles
+# native modules - bcrypt and sharp. A prebuilt deployment ships whatever
+# binaries the builder produced, and a runner whose libc or platform differs
+# from the Vercel runtime yields "invalid ELF header" or missing-binding crashes
+# on every request. Letting Vercel install on its own infrastructure removes
+# that entire class of failure.
 #
 # SECURITY: no ${{ }} expression may be interpolated into a `run:` script.
 # GitHub substitutes those textually before the shell parses the line, so a
-# free-text input or client_payload containing $(...) would execute on the
-# runner - where actions/checkout has already persisted GH_PAT into
-# .build/*/.git/config. Pass them through `env:` and read them as shell
-# variables instead.
+# free-text input could execute on the runner. Pass them through `env:` and read
+# them as shell variables instead.
 
-name: Deploy to Vercel
+name: Deploy API to Vercel
 
 on:
   push:
     branches: [main]
 
-  # Gym-Admin and Gym-frontend poke this workflow when they push to main, so a
-  # change to either front end goes live without also having to touch this
-  # repo. They send the pushed SHA in client_payload, so the deploy builds the
-  # exact commit that triggered it rather than racing whatever main is by then.
-  repository_dispatch:
-    types: [deploy]
-
   workflow_dispatch:
-    inputs:
-      admin_ref:
-        description: "Gym-Admin ref to build"
-        default: main
-      frontend_ref:
-        description: "Gym-frontend ref to build"
-        default: main
 
-# Never let two production deploys race; a cancelled deploy can leave the
-# project pointing at a half-uploaded build. Queue rather than cancel, so a
-# push to a sibling repo cannot discard an in-flight deploy of another.
+# Queue rather than cancel: a cancelled deploy can leave the project pointing at
+# a half-uploaded build.
 concurrency:
-  group: vercel-production
+  group: vercel-api-production
   cancel-in-progress: false
 
 env:
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  # NOT VERCEL_PROJECT_ID. That secret still points at the front-end project
+  # (which kept the original project id, and therefore the domain), so reusing
+  # it here would deploy the API over the public site.
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_API_PROJECT_ID }}
   NODE_VERSION: "22"
-  # Resolved once here so all three trigger types (push / repository_dispatch /
-  # workflow_dispatch) funnel into the same two values.
-  ADMIN_REF: ${{ inputs.admin_ref || github.event.client_payload.admin_ref || 'main' }}
-  FRONTEND_REF: ${{ inputs.frontend_ref || github.event.client_payload.frontend_ref || 'main' }}
-  TRIGGERED_BY: ${{ github.event.client_payload.source || github.event_name }}
+  # The public origin, used to confirm the front end's /api/* rewrite still
+  # resolves to this deployment.
+  PUBLIC_ORIGIN: "https://mid-city-gym.vercel.app"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
 
     steps:
       - name: Check out Gym-Server
         uses: actions/checkout@v4
-
-      # GITHUB_TOKEN is scoped to this repository only, so the sibling repos
-      # need a PAT with `repo` access to the CanteenX org.
-      - name: Check out Gym-Admin
-        uses: actions/checkout@v4
-        with:
-          repository: CanteenX/Gym-Admin
-          ref: ${{ env.ADMIN_REF }}
-          token: ${{ secrets.GH_PAT }}
-          path: .build/admin
-
-      - name: Check out Gym-frontend
-        uses: actions/checkout@v4
-        with:
-          repository: CanteenX/Gym-frontend
-          ref: ${{ env.FRONTEND_REF }}
-          token: ${{ secrets.GH_PAT }}
-          path: .build/frontend
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Build Gym-frontend (static export)
-        working-directory: .build/frontend
-        env:
-          # Empty means same origin: the export is served from the same host as
-          # /api/v1, so the portal issues relative requests and skips CORS.
-          NEXT_PUBLIC_API_URL: ""
-        run: |
-          npm ci
-          npm run build
-
-      - name: Build Gym-Admin
-        working-directory: .build/admin
-        env:
-          VITE_API_URL: ""
-          # ADMIN_BASE_PATH is deliberately NOT set: "/admin/" is already the
-          # default in vite.config.js. Passing it only creates a way to get it
-          # wrong - on Git Bash, MSYS rewrites "/admin/" to a Windows path and
-          # Vite silently emits unreachable asset URLs.
-        run: |
-          # The template still carries peer-dependency conflicts from Velzon.
-          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
-
-          # An icon class the bundled fonts do not define renders as an empty,
-          # zero-width element: no error, no log, just a blank slot. Two shipped
-          # that way (ri-money-rupee-circle-line, ri-prohibited-line) and were
-          # only caught by eye. Fail here instead.
-          npm run check:icons
-
-          npm run build
-
-      - name: Assemble public/
+      # A missing secret must fail loudly here rather than quietly later. With
+      # VERCEL_PROJECT_ID empty and no committed .vercel/ link, the CLI's
+      # non-interactive `--yes` path PROVISIONS A NEW PROJECT named after the
+      # checkout directory and deploys there: the run goes green, the API lands
+      # somewhere nobody is looking, and mid-city-gym-api keeps serving the old
+      # release. This is the most likely first-run failure of this workflow,
+      # because VERCEL_API_PROJECT_ID is a secret that did not exist before the
+      # split.
+      - name: Check deploy target
         run: |
           set -euo pipefail
-          rm -rf public
-          mkdir -p public
-
-          # Frontend first: it owns the domain root. Admin is copied afterwards
-          # so a stray file at the export root can never clobber /admin.
-          cp -r .build/frontend/out/. public/
-          mkdir -p public/admin
-          cp -r .build/admin/build/. public/admin/
-
-          test -f public/index.html       || { echo "::error::frontend export missing index.html"; exit 1; }
-          test -f public/admin/index.html || { echo "::error::admin build missing index.html"; exit 1; }
-
-          # A mangled Vite base path emits asset URLs that 404, which renders a
-          # blank admin panel with no build error. Catch it before deploying.
-          grep -q '"/admin/assets/' public/admin/index.html \
-            || { echo "::error::admin index.html does not reference /admin/assets - bad base path"; exit 1; }
-
-          echo "Assembled $(find public -type f | wc -l) files"
+          [ -n "${VERCEL_ORG_ID:-}" ] || { echo "::error::VERCEL_ORG_ID secret is not set"; exit 1; }
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || { echo "::error::VERCEL_API_PROJECT_ID secret is not set"; exit 1; }
+          echo "Deploy target: $VERCEL_PROJECT_ID"
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      # Deliberately a REMOTE build (no `vercel build` + --prebuilt).
-      #
-      # The API bundles native modules - bcrypt and sharp. A prebuilt deployment
-      # ships whatever binaries the builder produced, and a runner whose libc or
-      # platform differs from the Vercel runtime yields "invalid ELF header" or
-      # missing-binding crashes on every request. Letting Vercel install on its
-      # own infrastructure removes that entire class of failure. The front ends
-      # are still built here and uploaded in public/, where vercel.json's
-      # placeholder buildCommand leaves them untouched.
       - name: Deploy to Vercel
         id: deploy
         env:
@@ -175,8 +102,8 @@ jobs:
 
           # `vercel deploy` prints the deployment-SPECIFIC url, which Deployment
           # Protection puts behind SSO: it answers 302 to anonymous requests, so
-          # testing it fails even on a perfectly healthy release. The public
-          # production alias is what real users hit, so resolve and test that.
+          # testing it fails even on a perfectly healthy release. The production
+          # alias is public, so resolve and test that.
           alias=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
             "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" \
             | jq -r '.targets.production.alias[0] // empty')
@@ -188,31 +115,49 @@ jobs:
             base="$DEPLOY_URL"
           fi
           echo "Smoke testing $base"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
 
           fail=0
-          check() {
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$base$1")
-            if [ "$code" = "$2" ]; then
-              echo "ok   $1 -> $code"
-            else
-              echo "::error::$1 returned $code, expected $2"
-              fail=1
-            fi
-          }
-          check "/" 200
-          check "/admin" 200
-          check "/admin/" 200
-          check "/api" 200
 
-          # The icon font is loaded from a CDN, so a healthy page can still
-          # render every icon as a blank box if this 404s or is blocked.
-          font="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.woff2"
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$font")
-          if [ "$code" = "200" ]; then
-            echo "ok   icon font -> $code"
+          # A connected database is the only result that means anything here: the
+          # function can start, answer, and reach Atlas.
+          api=$(curl -sL --max-time 30 "$base/api")
+          if printf '%s' "$api" | grep -q '"database":"Connected"'; then
+            echo "ok   $base/api -> database Connected"
           else
-            echo "::error::icon font returned $code from $font"
+            echo "::error::$base/api did not report a connected database: $api"
+            fail=1
+          fi
+
+          # An authenticated route must refuse anonymous access. A 200 here would
+          # mean the auth middleware is not running.
+          code=$(curl -sL -o /dev/null -w '%{http_code}' --max-time 30 \
+            "$base/api/v1/companies/getCompanyDetails")
+          if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "ok   protected route -> $code"
+          else
+            echo "::error::protected route returned $code, expected 401/403"
+            fail=1
+          fi
+
+          # Source must not be web-reachable. outputDirectory is set to a throwaway
+          # public/ precisely so Vercel's "Other" preset cannot serve the repo root,
+          # which would publish the committed .env.
+          for path in /.env /server.js /package.json; do
+            body=$(curl -sL --max-time 30 "$base$path" | head -c 2000)
+            if printf '%s' "$body" | grep -qiE 'DATABASE=|JWT_SECRET|mongodb\+srv://|"dependencies"'; then
+              echo "::error::$path appears to expose repository source"
+              fail=1
+            else
+              echo "ok   $path not served as source"
+            fi
+          done
+
+          # And the front end's rewrite must still land here.
+          pub=$(curl -sL --max-time 30 "$PUBLIC_ORIGIN/api")
+          if printf '%s' "$pub" | grep -q '"database":"Connected"'; then
+            echo "ok   $PUBLIC_ORIGIN/api -> reaches this API"
+          else
+            echo "::error::$PUBLIC_ORIGIN/api did not reach a healthy API: $pub"
             fail=1
           fi
 
@@ -225,11 +170,9 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           {
-            echo "### Deployment"
+            echo "### API deployment"
             echo ""
             echo "- URL: $DEPLOY_URL"
-            echo "- Triggered by: $TRIGGERED_BY"
             echo "- Gym-Server commit: $COMMIT_SHA"
-            echo "- Gym-Admin ref: $ADMIN_REF"
-            echo "- Gym-frontend ref: $FRONTEND_REF"
+            echo "- Public origin: $PUBLIC_ORIGIN"
           } >> "$GITHUB_STEP_SUMMARY"

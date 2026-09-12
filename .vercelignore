@@ -11,3 +11,11 @@ out/
 .build/
 test-email.js
 precommit-output.txt
+
+# Defense in depth. .env is committed to this repo (see CLAUDE.md), and the
+# only thing keeping it unservable is outputDirectory pointing at a throwaway
+# public/. Excluding it from the UPLOAD removes the dependency on routing
+# behaviour entirely. Safe because every runtime value is set as a Vercel env
+# var, and dotenv.config() does not override existing process.env values.
+.env
+.env.*
