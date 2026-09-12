@@ -166,12 +166,31 @@ jobs:
 
       - name: Smoke test
         env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
+
+          # `vercel deploy` prints the deployment-SPECIFIC url, which Deployment
+          # Protection puts behind SSO: it answers 302 to anonymous requests, so
+          # testing it fails even on a perfectly healthy release. The public
+          # production alias is what real users hit, so resolve and test that.
+          alias=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" \
+            | jq -r '.targets.production.alias[0] // empty')
+
+          if [ -n "$alias" ]; then
+            base="https://$alias"
+          else
+            echo "::warning::could not resolve the production alias; testing $DEPLOY_URL instead"
+            base="$DEPLOY_URL"
+          fi
+          echo "Smoke testing $base"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
           fail=0
           check() {
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$DEPLOY_URL$1")
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$base$1")
             if [ "$code" = "$2" ]; then
               echo "ok   $1 -> $code"
             else
