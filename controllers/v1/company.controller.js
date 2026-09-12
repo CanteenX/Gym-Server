@@ -10,10 +10,6 @@ import {
 } from "../../services/authService.js";
 import EmployeeRoles from "../../models/EmployeeRoles.js";
 
-// ✅ Helper: validate consent
-const validateConsent = (locationConsent, ipConsent) => {
-  return locationConsent && ipConsent;
-};
 
 // ✅ Helper: get IP address
 const getIpAddress = (req) => {
@@ -329,16 +325,10 @@ export const loginCompany = async (req, res) => {
       clientLongitude,
     } = req.body;
 
-    // ✅ Validate consent
-    if (!validateConsent(locationConsent, ipConsent)) {
-      return res.status(400).json({
-        isOk: false,
-        message:
-          "Please accept both location and IP address tracking consent to continue",
-        error: "Consent required",
-        status: 400,
-      });
-    }
+    // Consent is no longer collected: the login form asks for email and
+    // password only. This gate rejected any request without both flags with a
+    // 400, which is why removing the checkboxes broke login outright. The two
+    // fields remain accepted (and optional) for any client still sending them.
 
     // ✅ Validate email
     if (typeof email !== "string" || !email.trim()) {
