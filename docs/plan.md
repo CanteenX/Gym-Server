@@ -425,6 +425,61 @@ user-visible; an atomic write and `ReminderLog` are what prevent them.
 
 ---
 
+### Phase 6 — Admin login page (independent, can run any time)
+
+The login page was rebalanced to 58/42 and put on brand navy, but it is still
+plainly composed: a flat pale panel with the logo and a form on white. Compared
+against `marfatia.net/admin/`, four specific techniques are missing — the
+difference is depth and a typographic anchor, not colour.
+
+Measured from the reference rather than eyeballed:
+
+| | Reference | Ours today |
+|---|---|---|
+| Brand panel | `linear-gradient(135deg, #064e3b, #047857)` + faint cross-hatch pattern | flat `#f1f5fb` |
+| Logo treatment | dark logo inside a **white rounded tile** (~140 px, ~24 px radius) | bare logo on a pale ground |
+| Headline | "Welcome to Admin Panel", ~44 px bold white, with a line of subcopy | none |
+| Form container | white card, ~16 px radius, soft shadow, floating on `#f3f3f9` | form directly on plain white |
+| Font | Poppins | Poppins (already matches) |
+
+**The white logo tile is the unlock.** Our brand panel is pale blue only because
+the wordmark is dark navy on transparent and would vanish on a navy ground. Put
+the logo in a white rounded tile and the panel can finally be brand navy, which
+is what makes the reference read as branded rather than decorated.
+
+Proposed spec:
+
+- **Left panel (58%)**: navy `$navy-900 → $navy-700` surface with a very low
+  contrast repeating pattern; white rounded logo tile; headline
+  ("Mid City Gym — Staff Panel" or similar) and one line of subcopy; the two
+  branch chips move here.
+- **Right panel (42%)**: tinted ground rather than plain white, with the form in
+  a floating white card — radius 12–16 px, the navy-tinted shadow already added.
+- Keep: the navy submit button, field ids, `autoComplete`, Enter-to-submit, and
+  the panel collapsing below `lg`. None of the form logic changes.
+- Do **not** copy the reference's consent checkboxes — those were deliberately
+  removed, along with the `confirm()` dialog and the geolocation await.
+
+**One decision needed.** The reference gets its depth from a *gradient* panel,
+and the instruction here was to remove gradients everywhere. That instruction
+was about buttons, where a gradient reads as dated; on a large brand surface it
+reads as intentional. Two options:
+
+- **A. Gradient brand panel** — matches the reference, gradients stay banned on
+  buttons and badges. `applyTheme`'s flattening only touches `--btn-*`
+  variables, so it will not strip a panel background.
+- **B. Flat navy panel + pattern only** — keeps "no gradients anywhere" literal;
+  slightly less depth, still a large improvement over flat pale blue.
+
+I would take A and keep the ban specific to controls, but B is a one-line
+difference if gradients are unwanted on principle.
+
+**Risk: LOW.** Presentation only, no auth logic touched. The one hazard is
+contrast: white subcopy on a mid-navy panel must clear 4.5:1, so the pattern
+overlay has to stay low-opacity rather than lightening the ground.
+**Effort: 3–4 h.**
+
+
 ## 5. Cross-cutting requirements
 
 - **Branch scoping** on every new query, export and report. Read
@@ -467,4 +522,4 @@ the highest-risk phase because it can turn a paying member away at the door, and
 it is safer once Phase 4's audit log already exists. Phase 5 depends on Phase 1's
 mail service.
 
-Total: **48–72 h**, shippable as five independent increments.
+Total: **51–76 h**, shippable as six independent increments.
