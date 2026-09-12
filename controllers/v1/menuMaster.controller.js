@@ -280,119 +280,107 @@ export const listMenuMasterByParams = async (req, res) => {
 
 export const getMenuByGroups = async (req, res) => {
   try {
-    // Get all active menu groups ordered by sequence
-    const menuGroups = await mongoose
-      .model("MenuGroupMaster")
-      .find({ isActive: true })
-      .sort({ sequence: 1 });
+    // Previously this issued a query PER NODE: one find per group, an exists()
+    // per menu to test for children, and a recursive find per level. With the
+    // real menu tree that is 50-100 sequential round trips to Atlas, and it
+    // measured a consistent 9.3 seconds - the single slowest endpoint in the
+    // admin panel, and what left the sidebar on "Loading menus..." for ~10s
+    // after every login.
+    //
+    // Two queries now fetch everything and the tree is assembled in memory.
+    const [menuGroups, allMenus] = await Promise.all([
+      mongoose
+        .model("MenuGroupMaster")
+        .find({ isActive: true })
+        // _id breaks ties: several menus share a sequence, and without a
+        // tiebreaker Mongo returns them in an arbitrary order, so the
+        // sidebar silently reordered itself between requests. _id sorts by
+        // creation, which is stable.
+        .sort({ sequence: 1, _id: 1 })
+        .lean(),
+      MenuMaster.find({ isActive: true }).sort({ sequence: 1, _id: 1 }).lean(),
+    ]);
 
-    // Create a result object
-    const result = [];
+    // Index children by parent id. Both source queries are already sorted by
+    // sequence, so every bucket keeps that order without re-sorting.
+    const childrenByParent = new Map();
+    for (const menu of allMenus) {
+      if (!menu.parentMenu) continue;
+      const key = String(menu.parentMenu);
+      const bucket = childrenByParent.get(key);
+      if (bucket) bucket.push(menu);
+      else childrenByParent.set(key, [menu]);
+    }
 
-    // Helper function to recursively build menu tree
-    const buildMenuTree = async (parentId = null) => {
-      const menus = await MenuMaster.find({
-        parentMenu: parentId,
-        isActive: true,
-      }).sort({ sequence: 1 });
-
-      const menuItems = [];
-
-      for (const menu of menus) {
-        // Check if this menu has children
-        const hasChildren = await MenuMaster.exists({
-          parentMenu: menu._id,
-          isActive: true,
-        });
-
-        const menuItem = {
-          id: menu._id,
-          name: menu.menuName,
-          url: menu.menuUrl || "#",
-          sequence: menu.sequence,
-          isParent: !!hasChildren,
-          icon: menu.icon,
-        };
-
-        // If this menu has children, recursively get them
-        if (hasChildren) {
-          menuItem.children = await buildMenuTree(menu._id);
-        }
-
-        menuItems.push(menuItem);
+    /**
+     * @param {object} menu
+     * @param {boolean} nested - nested rows fall back to "#" for a missing url,
+     *   top-level rows leave it undefined. Preserved from the original shape,
+     *   because the sidebar distinguishes the two.
+     */
+    const toMenuItem = (menu, nested) => {
+      const children = childrenByParent.get(String(menu._id)) || [];
+      const item = {
+        id: menu._id,
+        name: menu.menuName,
+        url: nested ? menu.menuUrl || "#" : menu.menuUrl,
+        sequence: menu.sequence,
+        isParent: children.length > 0,
+        // .lean() skips schema defaults, and JSON.stringify drops undefined - so
+        // the default has to be applied here or the key vanishes from the
+        // response for every menu without an icon.
+        icon: menu.icon ?? "",
+      };
+      if (children.length > 0) {
+        item.children = children.map((child) => toMenuItem(child, true));
       }
-
-      return menuItems;
+      return item;
     };
 
-    // For each menu group, get its menus
-    for (const group of menuGroups) {
-      // If this is a direct link menu group, add it differently
+    // Top-level menus (no parent) bucketed by their group.
+    const topLevelByGroup = new Map();
+    for (const menu of allMenus) {
+      if (menu.parentMenu || !menu.menuGroup) continue;
+      const key = String(menu.menuGroup);
+      const bucket = topLevelByGroup.get(key);
+      if (bucket) bucket.push(menu);
+      else topLevelByGroup.set(key, [menu]);
+    }
+
+    const result = menuGroups.map((group) => {
+      // A direct-link group navigates straight to its own url and carries no
+      // menus of its own.
       if (group.isLink) {
-        result.push({
+        return {
           groupId: group._id,
           groupName: group.menuGroupName,
           sequence: group.sequence,
           isLink: true,
-          url: group.menuUrl,
-          icon: group.icon,
-          menus: [], // Empty menus for direct link groups
-        });
-        continue; // Skip the rest of the loop for this group
-      }
-
-      // Find all top-level menus for this group (no parent)
-      const topLevelMenus = await MenuMaster.find({
-        menuGroup: group._id,
-        isActive: true,
-        $or: [{ parentMenu: null }, { parentMenu: { $exists: false } }],
-      }).sort({ sequence: 1 });
-
-      // Process each top-level menu
-      const processedMenus = [];
-
-      for (const menu of topLevelMenus) {
-        // Check if this menu has children
-        const hasChildren = await MenuMaster.exists({
-          parentMenu: menu._id,
-          isActive: true,
-        });
-
-        const menuItem = {
-          id: menu._id,
-          name: menu.menuName,
-          url: menu.menuUrl,
-          sequence: menu.sequence,
-          isParent: !!hasChildren,
-          icon: menu.icon,
+          url: group.menuUrl ?? "#",
+          icon: group.icon ?? "",
+          menus: [],
         };
-
-        // If this menu has children, recursively get them
-        if (hasChildren) {
-          menuItem.children = await buildMenuTree(menu._id);
-        }
-
-        processedMenus.push(menuItem);
       }
 
-      if (processedMenus.length > 0 || !group.isLink) {
-        result.push({
-          groupId: group._id,
-          groupName: group.menuGroupName,
-          sequence: group.sequence,
-          isLink: false,
-          icon: group.icon,
-          menus: processedMenus,
-        });
-      }
-    }
+      return {
+        groupId: group._id,
+        groupName: group.menuGroupName,
+        sequence: group.sequence,
+        isLink: false,
+        icon: group.icon ?? "",
+        menus: (topLevelByGroup.get(String(group._id)) || []).map((menu) =>
+          toMenuItem(menu, false),
+        ),
+      };
+    });
+
     res.status(200).json({
       isOk: true,
       message: "Menus by groups fetched successfully",
       data: result,
     });
   } catch (error) {
-    console.log("Error in getMenuByGroups:", error);
+    console.error("Error in getMenuByGroups:", error);
     res.status(500).json({
       isOk: false,
       message: "Error fetching menus by groups",
