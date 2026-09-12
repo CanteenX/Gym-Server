@@ -140,17 +140,36 @@ self-reported and the churn signal worthless.
 
 | Approach | Presence proof | Requires |
 |---|---|---|
-| **Rotating QR on a screen at reception** (recommended) | Strong — the code changes every 30–60 s, so a photo is useless within a minute | Any tablet/TV/spare phone at reception showing a kiosk page |
+| Rotating QR on a screen at reception | Strong — the code changes every 30–60 s, so a photo is useless within a minute | Any tablet/TV/spare phone at reception showing a kiosk page |
 | Static printed QR + device geofence | Moderate — raises effort, but GPS is spoofable and prompts for permission | Nothing physical; costs a permission prompt |
-| Static printed QR alone | **None** — attendance becomes self-reported | Nothing |
+| **Static printed QR alone** (CHOSEN) | **None** — attendance is self-reported | Nothing |
 
-**Recommendation: rotating QR on a screen.** The kiosk page needs no
-interaction and no one attending it — it just displays a QR derived from a
-branch secret plus the current time window, exactly like an authenticator code.
-The member's scan carries that short-lived token, so the server can tell a scan
-at the door from a scan at home. If there is no screen available at either
-branch, fall back to static + geofence and accept that attendance is
-approximately honest.
+**Decision: static printed QR alone.** A printed sticker per branch, no screen,
+no geofence, no kiosk page. This is the cheapest thing that works and it can be
+upgraded later without touching the member-facing flow — the rotating variant
+only changes what the QR encodes and adds one server check.
+
+What the static QR actually buys, given the check-in button already exists (D2b):
+
+- **Fewer taps.** The QR deep-links straight to the check-in action rather than
+  making the member navigate the portal.
+- **Branch attribution.** The QR carries its branch, so the entry is attributed
+  to Vasna or Gotri without the member selecting it — which is what makes
+  per-branch footfall meaningful at all.
+
+What it does not buy, stated plainly so nobody is surprised later:
+
+- **It is not proof of attendance.** The sticker can be photographed once and
+  the link used from anywhere, and the existing button needs no QR at all. A
+  member can log a session without entering the building.
+- Consequently the **"not seen in 14 days" churn signal in Phase 4 is soft**.
+  It still catches the common case — someone who has stopped coming and stopped
+  logging — but it cannot distinguish that from someone who comes and never
+  scans, or who scans from home. Treat it as a prompt for a phone call, not as
+  evidence.
+- Eligibility gating still works and is still worth having: an expired member
+  who scans is told their membership has lapsed and the denial is recorded for
+  staff. It just cannot stop them walking in, which nothing unattended can.
 
 ### D2b — Manual session start ALREADY EXISTS; QR is the layer on top
 
@@ -279,18 +298,17 @@ per-page OG/Twitter images; canonical URLs; a `next/image` sizing pass.
 
 Per D2 and D3.
 
-- `GET /api/v1/kiosk/branch-token` (kiosk-authenticated) → rotating branch token
-  for the reception screen, valid for one 30–60 s window.
+- **Printed QR per branch**, encoding a deep link such as
+  `/{portal}/attendance?branch=vasna&src=qr`. No kiosk page, no rotating token,
+  no screen — per D2. Generated once from the admin so the branch codes are not
+  hand-typed onto a sticker.
 - `POST /member-portal/attendance/scan` (**member**-authenticated — the member's
-  own phone makes this call) → verifies the scanned branch token is for the
-  current window, resolves member or trainer, evaluates eligibility (active
-  subscription, payment due, inactive flag) and returns an explicit
-  `ALLOW` / `DENY` + reason, recording the attempt either way.
+  own phone makes this call) → resolves member or trainer, evaluates eligibility
+  (active subscription, payment due, inactive flag) and returns an explicit
+  `ALLOW` / `DENY` + reason, recording the attempt either way with the branch
+  from the QR.
 - `GET /api/v1/attendance/live` (staff-authenticated) → arrivals since a `since`
   timestamp, for the admin feed.
-- Reception kiosk page (unattended) displaying a rotating branch QR, refreshed
-  every 30-60 s from a branch secret plus the time window - no interaction and
-  nobody attending it.
 - Member-side scanner in the portal on mobile; the verdict is shown to the
   member, since no one is at the door to refuse entry.
 - Admin arrivals feed polling GET /api/v1/attendance/live, denials surfaced
@@ -299,23 +317,27 @@ Per D2 and D3.
   are auditable rather than invisible.
 - Admin: live "in the gym now" plus per-day footfall.
 
-**Risk: MEDIUM.** Lower than when a person was refusing entry, because a false
-DENY now misinforms a member rather than physically turning them away — but it
-still tells a paying member their membership has lapsed when it has not, at the
-door, with nobody there to correct it. So the eligibility rules still need unit
-tests, the message must direct them to reception rather than dead-ending, and
-staff need a one-click "mark as allowed" on the feed that is itself audit-logged.
+**Risk: LOW-MEDIUM.** Lower than either earlier version. Nobody is refusing
+entry, so a false DENY misinforms rather than turns someone away; and dropping
+the rotating token removes the clock-skew failure mode entirely, where a kiosk
+screen drifting out of sync with the server would have rejected every scan.
 
-The other exposure is the rotating token: if the kiosk screen and the server
-drift out of time sync, every scan fails. The token window must be generous
-(accept the previous window too) and the kiosk page should surface its own clock
-skew rather than silently rejecting everyone.
-**Effort: 12–16 h.**
+What remains: a wrong eligibility verdict tells a paying member their
+membership has lapsed, at the door, with nobody there to correct it. So the
+eligibility rules still need unit tests, the DENY message must point them to
+reception rather than dead-ending, and staff need a one-click "mark as allowed"
+on the arrivals feed that is itself audit-logged.
+
+**Effort: 8–11 h** (down from 12–16: no kiosk page, no rotating-token
+endpoint, no time-window verification).
 
 ### Phase 4 — Visibility: attendance views, reports, exports, audit log
 
 - Staff attendance: footfall per branch/day, in-gym now, and **not seen in 14
-  days** — the churn signal already sitting in the data.
+  days**. Label this one "not checked in for 14 days", not "not visited" — with
+  the static QR chosen in D2 there is no presence proof, so it measures logging
+  behaviour rather than actual visits. Still the best churn prompt available, but
+  it should read as "worth a phone call", not as evidence someone stopped coming.
 - Reports: collections by month/branch, expiry pipeline, member ageing, and a
   P&L that keeps `"Common"` out of any single branch's numbers.
 - Exports: revive `ExportCSVModal` with server-side generation, scoped by
