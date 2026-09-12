@@ -98,34 +98,46 @@ Pre-existing defects found by the new gate and fixed here (not introduced by Pha
 
 ---
 
-## Phase 1 — CMS, adverts, contact form, leads (8–12 h)
+## Phase 1 — CMS, adverts, contact form, leads (8–12 h) — DONE except live deploy
 
 Server
-- [ ] `services/mailService.js` extracted from `otp.controller.js`; OTP uses it
-- [ ] Seed `EmailSetup` row for `nventra01@gmail.com` (app password in Mongo only — never `.env`, never docs)
-- [ ] Models: `SiteContent`, `Advertisement`, `Lead`
-- [ ] `GET /api/v1/site/content`, `GET /api/v1/site/ads` (public reads)
-- [ ] Authenticated writes behind `checkPermission`
-- [ ] `POST /api/v1/site/leads`: `authRateLimiter` + honeypot/Turnstile + strict validation
-- [ ] Lead notification email → `nventra01@gmail.com`
-- [ ] Advert creatives via `secureUpload` → `persistBuffer` → Blob (no new path)
-- [ ] Saves call `revalidatePath()` on the affected route
+- [x] `services/mailService.js` extracted; OTP **and** `test-email.js` now use it — there was a second inline transport nobody had noticed. Exactly one `createTransport` in the repo
+- [x] `EmailSetup` seeded for `nventra01@gmail.com` (Mongo only; password read from `GMAIL_APP_PASSWORD` at seed time, never committed). **Verified by sending a real email** — delivered in 3.6 s
+- [x] Models: `SiteContent`, `Advertisement`, `Lead`
+- [x] `GET /api/v1/site/content`, `GET /api/v1/site/ads` (public reads)
+- [x] Authenticated writes behind `checkPermission` — 14 routes, verified no duplicates or shadowing across all 223 routes
+- [x] `POST /api/v1/site/leads`: `authRateLimiter` + honeypot + strict validation. **Verified**: valid → 201 saved; `website:""` and whitespace-only → saved (the form always sends an empty string, so treating key-presence as bot traffic would discard every real lead); filled honeypot → identical 201 but nothing persisted; missing phone → 400; unauthenticated admin list → 401
+- [x] Lead notification → `nventra01@gmail.com`, awaited behind an 8 s race (a detached promise never resolves on Vercel), lead saved first so dead SMTP costs latency not data
+- [x] Advert creatives via `secureUpload` → `persistBuffer` (no new path)
+- [x] `services/siteRevalidate.js` — the **server** calls the site's revalidation hook. The admin SPA cannot: `revalidatePath` is a Next server function and the secret would be in page source
+- [x] Unattributed leads (`branch: null`) visible/editable from any branch — the common case for a website enquiry; scoping them away would leave branch staff an empty inbox
+- [x] Menu seed does **not** blanket-grant to every role (least privilege); super admins bypass `checkPermission` anyway. `--grant-all` restores the old behaviour
 
 Admin
-- [ ] Website menu group: Pages, Adverts, Leads inbox; `MenuMaster` rows seeded
-- [ ] Lead inbox: status, assignedTo, notes
+- [x] Website menu group seeded: Pages, Adverts, Leads inbox — verified rendering in the sidebar
+- [x] Lead inbox: status, assignedTo, notes (note author taken from the session, never the body)
+- [x] Write buttons mirror the server's ADMIN bypass. Caught in browser testing: the least-privilege seed left the owner looking at an empty state telling them to click an "Add Advert" button that was never rendered
 
 Frontend
-- [ ] Marketing sections read `SiteContent` at request time (ISR)
-- [ ] Advert slots render from `Advertisement` (active window respected)
-- [ ] Contact form posts to leads endpoint; success + error states
+- [x] Marketing sections read `SiteContent` server-side; pages stay **prerendered** so crawlers get complete HTML
+- [x] Every section falls back to shipped copy — an API blip renders today's site, not an error page. Verified by building against a dead host
+- [x] Advert slots render by placement, active window respected
+- [x] Contact form posts to the leads endpoint with honeypot, loading/success/error states
+- [x] ISR on-demand + 60 s backstop. `revalidatePath` alone is insufficient — it drops the HTML but leaves the tagged fetch, so the page re-embeds the old rows; the hook clears tags too
+- [x] Hook lives at `/internal`, not `/api` — `beforeFiles` would proxy an `app/api` handler away to Express
 
 **Gate**
-- [ ] Code review
-- [ ] Browser: edit a page in admin → live within seconds without rebuild; upload an advert → visible on site; submit contact form → row in admin inbox + email received at `nventra01@gmail.com`
-- [ ] Browser: spam attempt (honeypot filled / rapid repeats) is rejected
-- [ ] Zero page errors; unnamed controls = 0 on new admin screens; 390 px no overflow
-- [ ] Live smoke green
+- [x] Code review — three parallel agents; every cross-repo integration claim re-verified rather than trusted. Two agent-reported "bugs" (honeypot empty-string, `CONTACT_FORM` source) were checked and found already correct
+- [x] **Full stack run locally** (Express + Next + admin SPA): create → **live on the prerendered page immediately**; update → propagates; delete → removed and fallback copy restored. All via `curl` with no JS executed, which is the SEO property that matters
+- [x] Browser: **GATE PASSED**, 37 checks, exit 0, including the three new screens — 0 unnamed controls, 0 nameless buttons, 0 zero-width icons, no overflow at 390 px
+- [x] Spam attempt rejected (verified above)
+- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+
+Known gaps carried forward (not defects, decisions needed):
+- [ ] Repeating content — the six programme cards, timetable, trainers, pricing, FAQs, testimonials — is still hardcoded in `src/lib/site.ts`. `SiteContent`'s flat shape cannot express structured records. Needs either a repeatable-items model or a `program-1…n` + `sortOrder` convention
+- [ ] `SiteContent.imageUrl` is free text in the editor; the server exposes an additive `POST /site/content/:id/image` that the admin does not yet use
+- [ ] `pageKey: "about"` has no route of its own; the revalidation hook maps it to `/`
+- [ ] An undocumented `sectionKey: "seo"` drives meta title/description — Phase 2 should formalise this
 
 ---
 
