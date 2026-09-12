@@ -22,7 +22,10 @@ Confirmed in scope:
 5. Full website CMS — every currently-static marketing page editable from admin
 6. Lead capture: `Lead` model, admin inbox, staff notification
 7. Free-trial / class booking with a slot cap
-8. SEO: `sitemap.xml`, `robots.txt`, JSON-LD `LocalBusiness` per branch, OG images
+8. SEO: `sitemap.xml`, `robots.txt`, JSON-LD `LocalBusiness` per branch, OG
+   images, plus a **page-wise SEO Manager** in the admin (meta title/description,
+   keywords, canonical, Open Graph, live Google and social previews, score) -
+   modelled on marfatia.net/admin/seo-manager with the UI improvements in Phase 2
 9. Staff attendance view: footfall per branch per day, who is in the gym now,
    members not seen for 14 days
 10. Reports and exports (revive `ExportCSVModal`), respecting `financialScopeFilter`
@@ -286,13 +289,67 @@ a spam relay pointed at your inbox. Advert creatives must go through
 `secureUpload` → `persistBuffer` → Blob, not a new upload path.
 **Effort: 10–14 h.**
 
-### Phase 2 — SEO
+### Phase 2 — SEO, with a page-wise SEO Manager in the admin
 
-`sitemap.xml` and `robots.txt` generated from routes plus CMS pages; JSON-LD
-`LocalBusiness` per branch (Vasna and Gotri — real addresses, hours, geo);
-per-page OG/Twitter images; canonical URLs; a `next/image` sizing pass.
+Site-wide first: `sitemap.xml` and `robots.txt` generated from routes plus CMS
+pages; JSON-LD `LocalBusiness` per branch (Vasna and Gotri — real addresses,
+hours, geo); canonical URLs; a `next/image` sizing pass.
 
-**Risk: LOW. Effort: 4–6 h.**
+Then the admin screen, modelled on `marfatia.net/admin/seo-manager`.
+
+**`SeoMeta` model**, one document per page: `slug` (unique), `pageTitle`,
+`category`, `icon`, `metaTitle`, `metaDescription`, `keywords[]`, `canonicalUrl`,
+`ogTitle`, `ogDescription`, `ogImage`, `ogType`, `noIndex`, `isActive`.
+
+**Admin UI — three panes:**
+
+1. *Page list* — searchable, category-filter chips, add/edit/delete, and a
+   completeness indicator per row (Complete / Partial / Missing).
+2. *Editor* — Meta Title and Meta Description with live character counters
+   against the 60/160 targets; Keywords as removable chips (Enter or comma to
+   add); Canonical URL; an Open Graph block (OG Title and Description defaulting
+   to the meta values when blank, OG Image with a thumbnail, OG Type);
+   Save / Discard, and a "View Live" link.
+3. *Previews* — an SEO score with a per-rule checklist, a Google search-result
+   mock, and a social-share card mock, all updating as you type.
+
+**Where ours should be better than the reference, concretely:**
+
+- **Server-rendered from the database.** Because D1 makes the site dynamic,
+  these values feed Next's `generateMetadata()` per route, and saving calls
+  `revalidatePath()` — so an edit is live in seconds and is real HTML in the
+  crawler's response. A static site would need a rebuild for each change.
+- **Status is not colour-only.** The reference signals completeness with a bare
+  green/amber/red dot plus a legend at the bottom of the list. Colour alone
+  fails for colour-blind users and in greyscale; ours pairs the dot with a short
+  text label, which also removes the need for the legend.
+- **Reuse the existing `IconPicker`.** The reference asks the user to type a
+  Remixicon class name into a free-text field ("ri-file-line"), which is a typo
+  waiting to happen — and we now know from the icon work that a wrong class
+  renders an invisible, zero-width element. `Components/Common/IconPicker.jsx`
+  already exists and offers only valid classes; `scripts/check-icons.mjs` cannot
+  catch a bad value that lives in the database.
+- **Counters should warn, not just fill.** A progress bar that only grows tells
+  you nothing at 75/60 characters. Ours turns amber approaching the limit and
+  red past it, since Google truncates rather than rejects.
+- **Preview both widths.** Google truncates titles differently on mobile and
+  desktop, so the preview needs a toggle rather than one fixed mock.
+- **Portal routes get `noIndex`, not SEO fields.** Ours has ~9 routes, of which
+  6 sit behind member auth (`login`, `dashboard`, `attendance`, `weight`,
+  `workout`, `change-password`). Those should never be indexed. The reference's
+  flat 42-page list makes no such distinction; ours seeds `noIndex: true` for
+  the portal group and excludes them from `sitemap.xml` automatically, so nobody
+  has to remember.
+- **Score rules must be honest.** Show what each rule checks and let clicking it
+  jump to the offending field. A single number with no path to fixing it is
+  decoration.
+
+**Risk: LOW-MEDIUM.** Low technically, but two things to get right: a bad
+`canonicalUrl` can de-index a page, so it should be validated and default to the
+route's own absolute URL rather than being free text; and `generateMetadata()`
+must fall back to sensible defaults when a row is missing, or adding a route
+without an SEO entry would ship a page with no title at all.
+**Effort: 10–14 h** (4–6 site-wide, 6–8 for the manager).
 
 ### Phase 3 — QR check-in for members and trainers
 
@@ -410,4 +467,4 @@ the highest-risk phase because it can turn a paying member away at the door, and
 it is safer once Phase 4's audit log already exists. Phase 5 depends on Phase 1's
 mail service.
 
-Total: **46–64 h**, shippable as five independent increments.
+Total: **48–72 h**, shippable as five independent increments.
