@@ -1,6 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "regions": [
+    "bom1"
+  ],
   "buildCommand": "echo 'Static assets are assembled by CI into public/ before vercel build'",
   "outputDirectory": "public",
   "functions": {
