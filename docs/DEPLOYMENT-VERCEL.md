@@ -36,7 +36,7 @@ Still required before the workflow can run:
 | Secret | How to get it |
 |---|---|
 | `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens, **signed in as `nventra01@gmail.com`**. This, not anyone's local CLI login, decides where CI deploys. |
-| `GH_PAT` | PAT with `repo` scope on the `CanteenX` org. `GITHUB_TOKEN` only reaches this one repo, so the two sibling checkouts need it. |
+| `GH_PAT` | PAT with `repo` scope on the `CanteenX` org. Needed in **all three** repos: here to clone the siblings, and in each sibling to dispatch a deploy. |
 
 `SESSION_SECRET` was absent from `.env` entirely, which is why `server.js` was
 falling back to the string hardcoded at `server.js:135` - so production was
@@ -91,6 +91,28 @@ cannot be reverted:
 boot. A serverless container cold-starts constantly, so they now live in
 `scripts/seedMenus.js`: the PM2 process still calls them at boot, and the
 workflow runs `npm run seed:menus` once per release. Both are idempotent.
+
+## What triggers a deploy
+
+Any of the three repos. Pushing to `main` on Gym-Admin or Gym-frontend runs a
+tiny `trigger-deploy.yml` in that repo which sends a `repository_dispatch` to
+Gym-Server, carrying the pushed SHA so the deploy builds exactly that commit
+rather than whatever `main` has become by the time it runs.
+
+```
+push Gym-Server/main     -------------------> Deploy to Vercel
+push Gym-Admin/main      --dispatch-------->    admin_ref    = pushed SHA
+push Gym-frontend/main   --dispatch-------->    frontend_ref = pushed SHA
+manual workflow_dispatch -------------------> refs you choose
+```
+
+Deploys are queued, not cancelled (`cancel-in-progress: false`), so two pushes
+landing close together both reach production instead of one discarding the
+other.
+
+Because of this, `GH_PAT` must exist in **all three** repositories: Gym-Server
+uses it to clone the siblings, and the siblings use it to dispatch, since a
+repository's own `GITHUB_TOKEN` cannot reach another repository.
 
 ## Running it
 
