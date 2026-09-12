@@ -3,7 +3,7 @@ import Employee from "../../models/Employee.js";
 import CompanyMaster from "../../models/CompanyMaster.js";
 import EmailTemplate from "../../models/EmailTemplate.js";
 import EmailFor from "../../models/EmailFor.js";
-import nodemailer from "nodemailer";
+import { sendMail } from "../../services/mailService.js";
 import bcrypt from "bcrypt";
 
 export const createOtp = async (req, res) => {
@@ -86,33 +86,15 @@ export const createOtp = async (req, res) => {
     emailBody = emailBody.replace("{{OTP_CODE}}", otp);
     emailTemplate.emailSignature = emailBody;
 
-    // Create transporter
-    let transporter;
     try {
-      // Set up configuration based on email provider
-      if (emailTemplate.emailFrom.host.toLowerCase().includes("gmail")) {
-        transporter = nodemailer.createTransport({
-          service: "gmail",
-          auth: {
-            user: emailTemplate.emailFrom.email,
-            pass: emailTemplate.emailFrom.appPassword,
-          },
-        });
-      } else {
-        transporter = nodemailer.createTransport({
-          host: emailTemplate.emailFrom.host,
-          port: emailTemplate.emailFrom.port,
-          secure: emailTemplate.emailFrom.SSL,
-          auth: {
-            user: emailTemplate.emailFrom.email,
-            pass: emailTemplate.emailFrom.appPassword,
-          },
-        });
-      }
-
-      // Send email
-      await transporter.sendMail({
-        from: `"${emailTemplate.mailerName}" <${emailTemplate.emailFrom.email}>`,
+      // The transport used to be built inline here, which meant a new TLS
+      // handshake per OTP and a second copy of the "gmail needs `service`"
+      // quirk. services/mailService.js owns both now; the EmailSetup row this
+      // template points at is passed explicitly, because a template may name a
+      // sending account other than the globally active one.
+      await sendMail({
+        setup: emailTemplate.emailFrom,
+        fromName: emailTemplate.mailerName,
         to: email,
         cc: emailTemplate.emailCC || "",
         bcc: emailTemplate.emailBCC || "",

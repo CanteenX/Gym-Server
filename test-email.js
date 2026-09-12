@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import nodemailer from "nodemailer";
+import { sendMail } from "./services/mailService.js";
 import EmailSetup from "./models/EmailSetup.js";
 import EmailFor from "./models/EmailFor.js";
 import EmailTemplate from "./models/EmailTemplate.js";
@@ -50,33 +50,18 @@ const runTest = async () => {
     emailBody = emailBody.replace("{{USERNAME}}", "Test User");
     emailBody = emailBody.replace("{{OTP_CODE}}", otp);
 
-    // 4. Create Transporter
-    let transporter;
-    if (template.emailFrom.host.toLowerCase().includes("gmail")) {
-      transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: template.emailFrom.email,
-          pass: template.emailFrom.appPassword,
-        },
-      });
-    } else {
-      transporter = nodemailer.createTransport({
-        host: template.emailFrom.host,
-        port: template.emailFrom.port,
-        secure: template.emailFrom.SSL,
-        auth: {
-          user: template.emailFrom.email,
-          pass: template.emailFrom.appPassword,
-        },
-      });
-    }
-
     console.log(`Sending test email TO: ${testRecipient}...`);
-    
-    // Send email
-    const info = await transporter.sendMail({
-      from: `"${template.mailerName}" <${template.emailFrom.email}>`,
+
+    // 4. Send through the shared transport.
+    //
+    // This script used to build its own nodemailer transport, which made it a
+    // test of a COPY of the send path rather than of the path production uses —
+    // the two drifted the moment either changed. It now exercises exactly the
+    // code an OTP or a lead notification runs through, so a green run here means
+    // something.
+    const info = await sendMail({
+      setup: template.emailFrom,
+      fromName: template.mailerName,
       to: testRecipient,
       cc: template.emailCC || "",
       bcc: template.emailBCC || "",

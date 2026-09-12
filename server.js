@@ -332,6 +332,7 @@ import bodyMetricRoutes from "./routes/v1/bodyMetrics.routes.js";
 import attendanceRoutes from "./routes/v1/attendance.routes.js";
 import workoutRoutes from "./routes/v1/workout.routes.js";
 import branchRoutes from "./routes/v1/branches.routes.js";
+import siteRoutes from "./routes/v1/site.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -359,6 +360,9 @@ app.use("/api/v1", bodyMetricRoutes);
 app.use("/api/v1", attendanceRoutes);
 app.use("/api/v1", workoutRoutes);
 app.use("/api/v1", branchRoutes);
+// Public website surface (marketing copy, adverts, leads). Must stay under
+// /api/ — the SPA catch-all below swallows anything that is not.
+app.use("/api/v1", siteRoutes);
 
 console.log("✅ V1 API routes loaded");
 

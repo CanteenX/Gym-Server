@@ -7,7 +7,9 @@
   "scripts": {
     "test": "jest",
     "start": "nodemon server.js --host 0.0.0.0",
-    "seed:menus": "node scripts/seedMenus.js"
+    "seed:menus": "node scripts/seedMenus.js",
+    "seed:website-menus": "node scripts/seedWebsiteMenus.js",
+    "seed:email": "node scripts/seedEmailSetup.js"
   },
   "keywords": [],
   "author": "",

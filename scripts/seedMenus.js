@@ -13,6 +13,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import MenuGroupMaster from "../models/MenuGroupMaster.js";
 import MenuMaster from "../models/MenuMaster.js";
+import { seedWebsiteMenus } from "./seedWebsiteMenus.js";
 
 const seedFaqMenus = async () => {
   try {
@@ -149,6 +150,15 @@ export { seedFaqMenus, seedHelpAndGuideMenus };
 export async function seedAllMenus() {
   await seedFaqMenus();
   await seedHelpAndGuideMenus();
+  // The Website screens differ from every other gym route: site.routes.js DOES
+  // apply checkPermission, which 403s when the menu row is absent. Boot-time
+  // seeding is therefore what keeps those screens reachable on the PM2
+  // deployment; the serverless pipeline runs `npm run seed:website-menus`.
+  try {
+    await seedWebsiteMenus();
+  } catch (err) {
+    console.error("❌ Error seeding Website menus =>", err);
+  }
 }
 
 // Direct execution (npm run seed:menus) owns its own connection lifecycle.

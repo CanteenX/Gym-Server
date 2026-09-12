@@ -77,18 +77,24 @@ Pre-existing defects found by the new gate and fixed here (not introduced by Pha
 
 ---
 
-## Phase 6 — Admin login page (3–4 h)
+## Phase 6 — Admin login page (3–4 h) — DONE except live deploy
 
-- [ ] Left panel: `linear-gradient(135deg, $navy-900, $navy-700)` as a static login-page SCSS rule (not via `themeType`), low-opacity pattern, white rounded logo tile (~140 px, ~24 px radius)
-- [ ] Headline + one line of subcopy; branch chips moved here
-- [ ] Right panel: tinted ground; form in floating white card (12–16 px radius, navy-tinted shadow)
-- [ ] Untouched: navy button, `#email`/`#password-input` ids, `autoComplete`, Enter-to-submit, panel hidden below `lg`
-- [ ] Not added: consent checkboxes, `confirm()`, geolocation
+- [x] Left panel: `linear-gradient(135deg, $navy-900, $navy-700)` (`#14213d → #22346b`) as a static rule in `custom.scss`. Verified in-browser. Not routed through `themeType` (default `solid` would flatten it) and not in `pages/_authentication.scss` (`app.scss` imports before `custom.scss`, so `$navy-*` is out of scope there and the build would fail)
+- [x] Pure-CSS hairline texture + radial highlight; no external requests
+- [x] White rounded logo tile — 269×100 at 22 px radius, logo rendered 210×57. Sized for the 260×70 wordmark rather than a square, which would letterbox it
+- [x] Headline + subcopy; branch chips restyled for a dark ground
+- [x] Right panel: tinted `#f3f4f9` ground; form in a floating white card, 16 px radius, navy-tinted shadow
+- [x] Untouched and verified by grep: `#email`, `#password-input`, both `htmlFor`, both `autoComplete`, both `name`, `.auth-pass-inputgroup`, `<Form onSubmit>`, `type="submit"`
+- [x] Not added: consent checkboxes, `confirm()`, geolocation (0 matches)
+- [x] Card logo un-letterboxed — was a 260×70 wordmark in a 100×100 box, now 160×43
+- [x] Latent bug fixed: the 768–991 px query set `.right-panel` to 50% while the left panel was already hidden by `d-none d-lg-flex`, leaving tablets a half-width form beside dead space. Breakpoint now matches Bootstrap `lg`
 
 **Gate**
-- [ ] Code review
-- [ ] Browser: Enter-to-login still works (278 ms baseline); white subcopy on panel ≥ 4.5:1; 1440 + 390 px screenshots; no overflow
-- [ ] Live smoke green
+- [x] Code review — implemented by subagent, independently verified: form contract intact, only 2 files touched, SCSS compiles, geometry and colours measured in-browser rather than taken on trust
+- [x] Browser: **GATE PASSED** (34 checks). Enter-to-login works (1343 ms), `sessionId` httpOnly set, 0 page errors, no overflow at 1440 or 390 px, screenshots captured
+- [x] Contrast measured against **both** gradient ends: worst new pair 8.52:1 against a 4.5 requirement; headline 11.85–15.97:1
+- [x] Claim checked and rejected: the subagent reported `.text-muted` at 3.43:1, but `custom.scss` already overrides it to `#6b7280` — measured **4.83:1**, passing. No change needed
+- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
 
 ---
 

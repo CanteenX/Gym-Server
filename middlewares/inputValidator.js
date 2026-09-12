@@ -318,6 +318,73 @@ export const searchValidation = [
     handleValidationErrors,
 ];
 
+/**
+ * Public website lead (contact form) validation.
+ *
+ * This is the ONLY unauthenticated write in the Phase 1 website surface, so it
+ * gets the strictest field-level validation in the file. Three things are
+ * deliberate:
+ *
+ *  1. `website` is a HONEYPOT, not a real field. It is accepted (so the bot
+ *     that filled it still gets a 200 and stops retrying) but capped at a
+ *     length that cannot be used to smuggle a payload; the controller discards
+ *     the whole submission when it is non-empty.
+ *  2. `phone` is required and `email` is not — a Vadodara gym enquiry reaches
+ *     us by phone; requiring an email would lose real leads. That mirrors
+ *     models/Member.js, where email is optional too.
+ *  3. Every free-text field runs through sanitizeString, because this copy is
+ *     rendered back into an admin panel and into a notification email.
+ *
+ * NOTE: allowOnlyFields is intentionally NOT layered on top. A 400 for an
+ * unexpected field would break the public form the moment the marketing site
+ * adds one, and the controller never spreads req.body into the model — it reads
+ * named fields only, so an extra field is inert rather than dangerous.
+ */
+export const createLeadValidation = [
+    body('name')
+        .trim()
+        .notEmpty().withMessage('Name is required')
+        .isLength({ min: MIN_LENGTHS.NAME, max: MAX_LENGTHS.NAME })
+        .withMessage(`Name must be between ${MIN_LENGTHS.NAME} and ${MAX_LENGTHS.NAME} characters`)
+        .customSanitizer(sanitizeString),
+    body('phone')
+        .trim()
+        .notEmpty().withMessage('Phone number is required')
+        .isLength({ min: 6, max: MAX_LENGTHS.PHONE })
+        .withMessage(`Phone number must be between 6 and ${MAX_LENGTHS.PHONE} characters`)
+        .matches(/^[+\d\s\-()]+$/).withMessage('Phone number contains invalid characters'),
+    body('email')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isEmail().withMessage('Please provide a valid email address')
+        .isLength({ max: MAX_LENGTHS.EMAIL }).withMessage(`Email must not exceed ${MAX_LENGTHS.EMAIL} characters`)
+        .normalizeEmail(),
+    body('message')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isLength({ max: MAX_LENGTHS.MEDIUM_TEXT })
+        .withMessage(`Message must not exceed ${MAX_LENGTHS.MEDIUM_TEXT} characters`)
+        .customSanitizer(sanitizeString),
+    body('source')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isIn(['WEBSITE', 'CONTACT_FORM', 'BOOKING'])
+        .withMessage('source must be WEBSITE, CONTACT_FORM or BOOKING'),
+    body('branch')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isLength({ max: 50 }).withMessage('branch must not exceed 50 characters')
+        // Validated for SHAPE only. The real check is against the Branch master
+        // in the controller, so opening a third gym never needs this file
+        // edited (see models/Branch.js).
+        .matches(/^[\w\s-]+$/).withMessage('branch contains invalid characters'),
+    body('website')
+        .optional({ values: 'null' })
+        .isLength({ max: MAX_LENGTHS.SHORT_TEXT })
+        .withMessage('Invalid submission'),
+    handleValidationErrors,
+];
+
 // ============ MIDDLEWARE TO REJECT UNEXPECTED FIELDS ============
 
 /**
@@ -384,6 +451,7 @@ export default {
     otpValidation,
     passwordResetValidation,
     searchValidation,
+    createLeadValidation,
     allowOnlyFields,
     allowedLoginFields,
     allowedEmployeeFields,
