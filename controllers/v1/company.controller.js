@@ -1,4 +1,3 @@
-import { getClientIp } from "../../utils/clientIp.js";
 import CompanyMasterModels from "../../models/CompanyMaster.js";
 import EmployeeModels from "../../models/Employee.js";
 import bcrypt from "bcrypt";
@@ -12,14 +11,6 @@ import {
 import EmployeeRoles from "../../models/EmployeeRoles.js";
 
 
-
-// ✅ Helper: get client location
-const getClientLocation = (req, clientLatitude, clientLongitude) => {
-  return {
-    latitude: clientLatitude || req.headers["x-client-latitude"] || null,
-    longitude: clientLongitude || req.headers["x-client-longitude"] || null,
-  };
-};
 
 // ✅ Helper: find user by email
 const findUserByEmail = async (sanitizedEmail) => {
@@ -79,19 +70,8 @@ const handleLockedAccount = async (res, userId, email) => {
 };
 
 // ✅ Helper: handle failed password attempt
-const handleFailedPassword = async (
-  res,
-  userId,
-  email,
-  ipAddress,
-  clientLocation
-) => {
-  const attemptResult = await recordFailedAttempt(
-    userId,
-    email,
-    ipAddress,
-    clientLocation
-  );
+const handleFailedPassword = async (res, userId, email) => {
+  const attemptResult = await recordFailedAttempt(userId, email);
 
   if (attemptResult.isLocked) {
     return res.status(423).json({
@@ -311,16 +291,13 @@ export const loginCompany = async (req, res) => {
     const {
       email,
       password,
-      locationConsent,
-      ipConsent,
-      clientLatitude,
-      clientLongitude,
     } = req.body;
 
-    // Consent is no longer collected: the login form asks for email and
-    // password only. This gate rejected any request without both flags with a
-    // 400, which is why removing the checkboxes broke login outright. The two
-    // fields remain accepted (and optional) for any client still sending them.
+    // Consent is no longer collected and neither is the client IP or location:
+    // the login form asks for email and password only. An earlier gate rejected
+    // any request without both consent flags with a 400, which is why removing
+    // the checkboxes broke login outright. Nothing about the request origin is
+    // recorded now - see services/authService.js.
 
     // ✅ Validate email
     if (typeof email !== "string" || !email.trim()) {
@@ -332,8 +309,6 @@ export const loginCompany = async (req, res) => {
     }
 
     const sanitizedEmail = email.trim().toLowerCase();
-    const ipAddress = getClientIp(req);
-    const clientLocation = getClientLocation(req, clientLatitude, clientLongitude);
 
     console.log("Login attempt received");
 
@@ -360,11 +335,11 @@ export const loginCompany = async (req, res) => {
     // ✅ Check password
     const isPasswordMatch = await bcrypt.compare(password, user.password);
     if (!isPasswordMatch) {
-      return handleFailedPassword(res, userId, email, ipAddress, clientLocation);
+      return handleFailedPassword(res, userId, email);
     }
 
     // ✅ Successful login
-    await recordSuccessfulLogin(userId, email, ipAddress, clientLocation);
+    await recordSuccessfulLogin(userId, email);
 
     const superAdminCompany = await CompanyMasterModels.findOne({ isSuperAdmin: true }) ||
                               await CompanyMasterModels.findOne({ isSuperAdmin: false });

@@ -1,5 +1,4 @@
 import LoginAttempt from "../models/LoginAttempt.js";
-import geoip from "geoip-lite";
 import mongoose from "mongoose";
 
 // Constants
@@ -7,96 +6,26 @@ const MAX_ATTEMPTS = 3;
 const LOCK_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 /**
- * Get geolocation data from IP address using geoip-lite
- * @param {string} ipAddress - The IP address to lookup
- * @returns {Object} Location coordinates object
- */
-const getLocationFromIP = (ipAddress) => {
-    try {
-        // Handle localhost and local IPs
-        if (
-            !ipAddress ||
-            ipAddress === "::1" ||
-            ipAddress === "127.0.0.1" ||
-            ipAddress?.startsWith("::ffff:127.") ||
-            ipAddress?.startsWith("::ffff:192.168.") ||
-            ipAddress?.startsWith("192.168.")
-        ) {
-            return {
-                latitude: null,
-                longitude: null,
-                city: "Local",
-                country: null,
-            };
-        }
-
-        // Remove IPv6 prefix if present
-        const cleanIp = ipAddress?.replace("::ffff:", "");
-        const geo = geoip.lookup(cleanIp);
-
-        if (geo) {
-            return {
-                latitude: geo.ll?.[0] || null,
-                longitude: geo.ll?.[1] || null,
-                city: geo.city || "Unknown",
-                country: geo.country || "Unknown",
-            };
-        }
-    } catch (error) {
-        console.error("Geolocation lookup failed:", error.message);
-    }
-
-    return {
-        latitude: null,
-        longitude: null,
-        city: "Unknown",
-        country: "Unknown",
-    };
-};
-
-/**
  * 1. Record a failed login attempt
- * Increments attemptCount, stores IP and geolocation, auto-locks if count >= 3
+ * Increments attemptCount and auto-locks if count >= 3
  * @param {string} userId - The user's MongoDB ObjectId
  * @param {string} userEmail - The user's email
- * @param {string} ipAddress - The request IP address
- * @param {Object} clientLocation - Optional client-provided location { latitude, longitude }
  * @returns {Promise<Object>} Updated login attempt record
  */
-const recordFailedAttempt = async (userId, userEmail, ipAddress, clientLocation = null) => {
+const recordFailedAttempt = async (userId, userEmail) => {
     try {
-        // Use client-provided location if available (exact GPS coordinates)
-        // Otherwise fall back to IP-based geolocation lookup
-        let location;
-        if (clientLocation && (clientLocation.latitude !== null || clientLocation.longitude !== null)) {
-            // Store exact GPS coordinates from the user's device
-            // Set city/country to null so frontend will show the coordinates with Google Maps link
-            location = {
-                latitude: clientLocation.latitude,
-                longitude: clientLocation.longitude,
-                city: null,     // null indicates we have exact coordinates, not an IP lookup
-                country: null,
-            };
-        } else {
-            location = getLocationFromIP(ipAddress);
-        }
-
         let attempt = await LoginAttempt.findOne({ userId });
 
         if (attempt) {
             // Update existing record
             attempt.attemptCount += 1;
             attempt.lastLoginAttempt = new Date();
-            attempt.ipAddress = ipAddress || "unknown";
-            attempt.locationCoordinates = location;
             attempt.updatedAt = new Date();
         } else {
             // Create new record
             attempt = new LoginAttempt({
                 userId,
                 userEmail,
-                ipAddress: ipAddress || "unknown",
-                locationCoordinates: location,
                 attemptCount: 1,
                 lastLoginAttempt: new Date(),
                 isLocked: false,
@@ -213,28 +142,10 @@ const isAccountLocked = async (userId, email = null) => {
  * Resets attemptCount: 0, isLocked: false, updates lastLoggedIn
  * @param {string} userId - The user's MongoDB ObjectId
  * @param {string} userEmail - The user's email
- * @param {string} ipAddress - The request IP address
- * @param {Object} clientLocation - Optional client-provided location { latitude, longitude }
  * @returns {Promise<Object>} Updated login attempt record
  */
-const recordSuccessfulLogin = async (userId, userEmail, ipAddress = null, clientLocation = null) => {
+const recordSuccessfulLogin = async (userId, userEmail) => {
     try {
-        // Use client-provided location if available (exact GPS coordinates)
-        // Otherwise fall back to IP-based geolocation lookup
-        let location;
-        if (clientLocation && (clientLocation.latitude !== null || clientLocation.longitude !== null)) {
-            // Store exact GPS coordinates from the user's device
-            // Set city/country to null so frontend will show the coordinates with Google Maps link
-            location = {
-                latitude: clientLocation.latitude,
-                longitude: clientLocation.longitude,
-                city: null,     // null indicates we have exact coordinates, not an IP lookup
-                country: null,
-            };
-        } else if (ipAddress) {
-            location = getLocationFromIP(ipAddress);
-        }
-
         const updateData = {
             attemptCount: 0,
             isLocked: false,
@@ -242,14 +153,6 @@ const recordSuccessfulLogin = async (userId, userEmail, ipAddress = null, client
             lastLoggedIn: new Date(),
             updatedAt: new Date(),
         };
-
-        // Add IP and location if provided
-        if (ipAddress) {
-            updateData.ipAddress = ipAddress;
-        }
-        if (location) {
-            updateData.locationCoordinates = location;
-        }
 
         const result = await LoginAttempt.findOneAndUpdate(
             { userId },
@@ -260,9 +163,6 @@ const recordSuccessfulLogin = async (userId, userEmail, ipAddress = null, client
         // If it's a new record (upserted), set the required fields
         if (!result.userEmail) {
             result.userEmail = userEmail;
-            if (!result.ipAddress) {
-                result.ipAddress = ipAddress || "unknown";
-            }
             await result.save();
         }
 
@@ -434,7 +334,6 @@ export {
     getLoginAttemptStatus,
     unlockAccount,
     resetLoginAttempts,
-    getLocationFromIP,
 };
 
 export default {
@@ -445,5 +344,4 @@ export default {
     getLoginAttemptStatus,
     unlockAccount,
     resetLoginAttempts,
-    getLocationFromIP,
 };

@@ -35,16 +35,6 @@ const loginAttemptSchema = new mongoose.Schema(
             type: Date,
             default: null,
         },
-        ipAddress: {
-            type: String,
-            required: false,
-        },
-        locationCoordinates: {
-            latitude: { type: Number, default: null },
-            longitude: { type: Number, default: null },
-            city: { type: String, default: null },
-            country: { type: String, default: null },
-        },
     },
     {
         timestamps: true,

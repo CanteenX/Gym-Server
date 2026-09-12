@@ -210,22 +210,6 @@ export const paginationValidators = [
 export const loginValidation = [
     emailValidator,
     passwordValidator,
-    body('locationConsent')
-        .optional()
-        .isBoolean().withMessage('locationConsent must be a boolean'),
-    body('ipConsent')
-        .optional()
-        .isBoolean().withMessage('ipConsent must be a boolean'),
-    body('clientIP')
-        .optional()
-        .trim()
-        .isLength({ max: MAX_LENGTHS.IP_ADDRESS }).withMessage('Invalid IP address format'),
-    body('clientLatitude')
-        .optional()
-        .isFloat({ min: -90, max: 90 }).withMessage('clientLatitude must be between -90 and 90'),
-    body('clientLongitude')
-        .optional()
-        .isFloat({ min: -180, max: 180 }).withMessage('clientLongitude must be between -180 and 180'),
     handleValidationErrors,
 ];
 
@@ -363,6 +347,12 @@ export const allowOnlyFields = (allowedFields) => {
 
 // ============ ALLOWED FIELDS FOR ENDPOINTS ============
 
+// Only email and password are read. The consent and client-origin fields are
+// still TOLERATED because allowOnlyFields answers 400 with 'Unexpected fields'
+// for anything not listed, and a browser holding a stale admin bundle would hit
+// that on login - the one flow that must never break. Nothing reads them: the
+// consent gate is gone and the login IP/location is no longer recorded. Drop
+// them once no deployed client can still be sending them.
 export const allowedLoginFields = [
     'email', 'password', 'locationConsent', 'ipConsent',
     'clientIP', 'clientLatitude', 'clientLongitude'
