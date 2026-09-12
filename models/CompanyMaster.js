@@ -90,12 +90,12 @@ const CompanyMasterSchema = new mongoose.Schema(
       // Brand green ($green in the admin SCSS), which is what the Active badge
       // already uses - so buttons and badges finally agree. Was Velzon's teal
       // #0ab39c, which read as off-brand against the navy panel.
-      default: "#4b7c5c",
+      default: "#15803d",
     },
     removeButtonColor: {
       type: String,
       // Brand red ($red), matching the Expired badge. Was Velzon's orange.
-      default: "#a83a32",
+      default: "#dc2626",
     },
     addButtonTextColor: {
       type: String,
