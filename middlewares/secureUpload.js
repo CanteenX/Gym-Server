@@ -20,21 +20,32 @@ import { IS_SERVERLESS } from "../config/runtime.js";
 import { persistBuffer } from "../storage/fileStore.js";
 import { fileTypeFromFile, fileTypeFromBuffer } from "file-type";
 
-// Lazy load sharp to handle Node version compatibility
-// Sharp requires Node.js 18+ - if not available, compression is disabled
+// sharp is a ~1.1 second native import. Loading it at module scope put that on
+// the critical path of every serverless cold start, including the large
+// majority of requests that never touch an upload. It is loaded on first actual
+// use instead, and the result cached for the life of the container.
+//
+// Sharp requires Node.js 18+; if unavailable, compression is disabled rather
+// than failing the upload.
 let sharp = null;
 let sharpAvailable = false;
+let sharpLoad = null;
 
-try {
-  sharp = (await import("sharp")).default;
-  sharpAvailable = true;
-  
-} catch (err) {
-  console.warn(
-    "[UPLOAD] Sharp not available - image compression disabled. Require Node 18+",
-    err.message,
-  );
-  sharpAvailable = false;
+async function ensureSharp() {
+  sharpLoad ??= (async () => {
+    try {
+      sharp = (await import("sharp")).default;
+      sharpAvailable = true;
+    } catch (err) {
+      console.warn(
+        "[UPLOAD] Sharp not available - image compression disabled. Requires Node 18+",
+        err.message,
+      );
+      sharpAvailable = false;
+    }
+    return sharpAvailable;
+  })();
+  return sharpLoad;
 }
 
 // ============ SECURITY CONFIGURATION ============
@@ -183,7 +194,7 @@ async function compressToWebP(input, options = {}) {
   }
 
   // If sharp is not available, return the original buffer
-  if (!sharpAvailable || !sharp) {
+  if (!(await ensureSharp()) || !sharp) {
     console.warn("[UPLOAD] Compression skipped - sharp not available");
     return input;
   }
@@ -225,7 +236,7 @@ async function compressToWebP(input, options = {}) {
  */
 async function compressToTargetSize(buffer, targetSize, minQuality = 20) {
   // If sharp is not available, return the original buffer
-  if (!sharpAvailable || !sharp) {
+  if (!(await ensureSharp()) || !sharp) {
     console.warn("[UPLOAD] Compression skipped - sharp not available");
     return buffer;
   }
@@ -384,7 +395,7 @@ export function createSecureImageUpload(options = {}) {
         let finalExt = path.extname(req.file.originalname).toLowerCase();
         
 
-        if ((compress || convertToWebP) && sharpAvailable) {
+        if ((compress || convertToWebP) && (await ensureSharp())) {
           if (targetSize) {
             // Compress to target size
             processedBuffer = await compressToTargetSize(
@@ -715,7 +726,7 @@ export function createSecureMultiUpload(options = {}) {
 
             if (
               compress &&
-              sharpAvailable &&
+              (await ensureSharp()) &&
               allowedMimes.some((m) => m.startsWith("image/")) &&
               finalExt !== ".ico"
             ) {

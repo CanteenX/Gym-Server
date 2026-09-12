@@ -155,15 +155,10 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed to $url"
 
-      # Menu rows used to be seeded on every server boot. A serverless container
-      # cold-starts constantly, so seeding moved here: once per release.
-      - name: Seed menus
-        env:
-          DATABASE: ${{ secrets.DATABASE }}
-        run: |
-          npm ci --omit=dev
-          npm run seed:menus
-
+      # The menu seed step was removed after it ran successfully: the rows now
+      # exist, seeding is idempotent but cost ~30s of `npm ci` on every deploy,
+      # and it needed DATABASE in CI. Re-run it by hand if menus ever need
+      # reseeding:  npm run seed:menus
       - name: Smoke test
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

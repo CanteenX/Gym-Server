@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import sharp from "sharp";
 import { IS_SERVERLESS } from "../config/runtime.js";
 
 const LOCAL_DIR = "uploads";
@@ -93,6 +92,10 @@ export async function saveUpload(file, options = {}) {
 
   if (compress && shouldCompress(ext)) {
     try {
+      // Imported here, not at module scope: sharp is a ~1.1s native import and
+      // loading it on every cold start penalised every request that never
+      // touches an upload.
+      const { default: sharp } = await import("sharp");
       const webp = await sharp(buffer).webp({ quality: 82 }).toBuffer();
       // Only take the conversion when it actually saved bytes, matching the
       // previous controller behaviour.

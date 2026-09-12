@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import hpp from "hpp";
 import session from "express-session";
-import { setupSwagger } from "./config/swagger.js";
 import { IS_SERVERLESS, IS_LONG_RUNNING } from "./config/runtime.js";
 import { connectDB } from "./config/db.js";
 
@@ -258,7 +257,52 @@ mongoose.connection.on("reconnected", () => {
 app.use(morgan("dev"));
 
 // Setup Swagger documentation (consider disabling in production)
-setupSwagger(app);
+// ============ SWAGGER (lazily mounted) ============
+// Building the spec globs and JSDoc-parses every file in routes/v1, measured at
+// ~4.8 seconds. Importing config/swagger.js at module scope therefore put those
+// 4.8s on the critical path of EVERY serverless cold start, to serve a docs page
+// that virtually no request asks for - it was the single largest component of
+// the slow first load.
+//
+// Mounted lazily instead: the first hit to /api-docs pays the cost, the built
+// router is cached for the life of the container, and nothing else waits. The
+// path is matched without a mount prefix so req.url stays intact for the inner
+// router.
+let swaggerRouterPromise = null;
+
+const buildSwaggerRouter = async () => {
+  const [{ default: swaggerSpec }, { default: swaggerUi }] = await Promise.all([
+    import("./config/swagger.js"),
+    import("swagger-ui-express"),
+  ]);
+
+  const router = express.Router();
+  router.get("/api-docs.json", (req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    res.send(swaggerSpec);
+  });
+  router.use(
+    "/api-docs",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, {
+      explorer: true,
+      customCss: ".swagger-ui .topbar { display: none }",
+      customSiteTitle: "Mid City Gym API Documentation",
+    }),
+  );
+  return router;
+};
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api-docs")) return next();
+  swaggerRouterPromise ??= buildSwaggerRouter();
+  swaggerRouterPromise
+    .then((router) => router(req, res, next))
+    .catch((err) => {
+      swaggerRouterPromise = null; // let a later request retry
+      next(err);
+    });
+});
 
 // ============ V1 ROUTES ============
 // Import v1 routes
