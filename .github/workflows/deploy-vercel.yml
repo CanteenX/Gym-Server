@@ -110,6 +110,13 @@ jobs:
         run: |
           # The template still carries peer-dependency conflicts from Velzon.
           npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+          # An icon class the bundled fonts do not define renders as an empty,
+          # zero-width element: no error, no log, just a blank slot. Two shipped
+          # that way (ri-money-rupee-circle-line, ri-prohibited-line) and were
+          # only caught by eye. Fail here instead.
+          npm run check:icons
+
           npm run build
 
       - name: Assemble public/
@@ -194,8 +201,21 @@ jobs:
             fi
           }
           check "/" 200
+          check "/admin" 200
           check "/admin/" 200
           check "/api" 200
+
+          # The icon font is loaded from a CDN, so a healthy page can still
+          # render every icon as a blank box if this 404s or is blocked.
+          font="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.woff2"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$font")
+          if [ "$code" = "200" ]; then
+            echo "ok   icon font -> $code"
+          else
+            echo "::error::icon font returned $code from $font"
+            fail=1
+          fi
+
           exit $fail
 
       - name: Summary
