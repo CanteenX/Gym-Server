@@ -1,5 +1,5 @@
 /**
- * Seeds the "Website" menu group and its three screens.
+ * Seeds the "Website" menu group and its four screens.
  *
  * Role grants are NOT applied by default - see step 3. Super admins do not
  * need them, and handing every role delete rights over the public website is
@@ -8,8 +8,11 @@
  * THIS SEED IS NOT OPTIONAL. routes/v1/site.routes.js applies checkPermission
  * to every admin write, and checkPermission resolves a menu BY URL — a missing
  * MenuMaster row is a 403 ("Menu '/website-pages' not found"), not a fallback.
- * Without this seed the three admin screens are unreachable even for a super
+ * Without this seed the four admin screens are unreachable even for a super
  * admin's employees, and the sidebar never shows them.
+ *
+ * Re-run it after pulling Phase 2 — the /seo-manager row is new, and the SEO
+ * Manager's writes 403 until it exists. Existing rows are left untouched.
  *
  * Run from the Gym-Server directory:  npm run seed:website-menus
  *
@@ -47,6 +50,19 @@ const WEBSITE_MENUS = [
     menuUrl: "/website-leads",
     sequence: 3,
     icon: "ri-inbox-archive-line",
+  },
+  /**
+   * Phase 2. A separate menu row rather than a permission on /website-pages:
+   * page copy and page metadata are edited by different people with different
+   * blast radii — a bad canonical URL de-indexes a page, which proofreading
+   * the hero text cannot do. Kept in this same seed so there is one script to
+   * run for the whole Website group, not two that can drift.
+   */
+  {
+    menuName: "SEO Manager",
+    menuUrl: "/seo-manager",
+    sequence: 4,
+    icon: "ri-search-eye-line",
   },
 ];
 

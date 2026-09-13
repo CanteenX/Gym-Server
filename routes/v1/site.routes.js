@@ -25,26 +25,43 @@ import {
   listLeadsByParams,
   updateLead,
 } from "../../controllers/v1/lead.controller.js";
+import {
+  getPublicSeoMeta,
+  listSeoByParams,
+  createSeoMeta,
+  updateSeoMeta,
+  deleteSeoMeta,
+} from "../../controllers/v1/seoMeta.controller.js";
+import {
+  getPublicSiteItems,
+  listSiteItemsByParams,
+  createSiteItem,
+  updateSiteItem,
+  uploadSiteItemImage,
+  deleteSiteItem,
+} from "../../controllers/v1/siteItem.controller.js";
 
 const router = express.Router();
 
 /**
- * Public website surface: editable marketing copy (SiteContent), banner adverts
- * (Advertisement) and inbound enquiries (Lead).
+ * Public website surface: editable marketing copy (SiteContent), repeating
+ * structured records (SiteItem), banner adverts (Advertisement), inbound
+ * enquiries (Lead) and per-route SEO metadata (SeoMeta).
  *
- * Three collections share one route file because they share one URL namespace
+ * Five collections share one route file because they share one URL namespace
  * (/site/...) and one admin area ("Website"), the same way emails.routes.js
  * carries four email masters. Mounted flat under /api/v1 like every other route
  * file — paths are written in full here, not derived from a router prefix.
  *
  * SECURITY SHAPE, and it is not uniform across this file:
  *
- *   - THREE endpoints are public and unauthenticated by design — the two reads
- *     the marketing site renders from, and the contact form POST. They are the
- *     only unauthenticated endpoints here and each is commented individually.
+ *   - FIVE endpoints are public and unauthenticated by design — the four reads
+ *     the marketing site renders from (copy, list items, adverts, SEO
+ *     metadata), and the contact form POST. They are the only unauthenticated
+ *     endpoints here and each is commented individually.
  *   - EVERY write is behind a staff session AND checkPermission. Unlike the
  *     older gym routes (members/trainers/transactions), checkPermission IS
- *     applied here, because the three MenuMaster rows it resolves are seeded by
+ *     applied here, because the four MenuMaster rows it resolves are seeded by
  *     scripts/seedWebsiteMenus.js. Run that seed before deploying, or every
  *     admin write 403s with "Menu '/website-pages' not found".
  */
@@ -91,6 +108,28 @@ const secureContentImageUpload = createSecureImageUpload({
   quality: 85,
 });
 
+const itemImageUploadDir = "uploads/cms/site-items";
+ensureLocalDir(itemImageUploadDir);
+
+/**
+ * A THIRD instance, again for its own folder and again safe only because it
+ * never shares a route with another one. Its own folder rather than reusing
+ * site-content's: trainer portraits and before/after photos are a different
+ * retention question from a hero image, and a folder is the cheapest way to
+ * keep that answerable.
+ *
+ * Compression is ON and safe: this field accepts images only
+ * (ALLOWED_MIMES.images), never a PDF, so the shared WebP conversion cannot
+ * corrupt anything — the member ID-proof rule does not apply here.
+ */
+const secureItemImageUpload = createSecureImageUpload({
+  destination: itemImageUploadDir,
+  fieldName: "image",
+  maxSize: 5 * 1024 * 1024,
+  compress: true,
+  quality: 85,
+});
+
 // ============ PUBLIC ENDPOINTS (NO AUTH — DELIBERATE) ============
 
 /**
@@ -115,6 +154,36 @@ router.get("/site/content", getPublicSiteContent);
 
 /**
  * @swagger
+ * /site/items:
+ *   get:
+ *     summary: Public repeating records for the website (active rows only)
+ *     tags: [Website]
+ *     parameters:
+ *       - in: query
+ *         name: collectionKey
+ *         schema:
+ *           type: string
+ *           enum: [programs, plans, faqs, trainers, classes, testimonials, transformations]
+ *         description: Which list to fetch. Omit for every active row.
+ *       - in: query
+ *         name: branch
+ *         schema:
+ *           type: string
+ *         description: >
+ *           Narrows to rows tagged with this branch PLUS every untagged row,
+ *           which belongs to the whole gym.
+ *     responses:
+ *       200:
+ *         description: Active rows, sorted by sortOrder
+ */
+// PUBLIC: these are the programme cards, prices, trainers, timetable, FAQs,
+// testimonials and transformations printed on midcitygym.in. Requiring auth
+// would mean the marketing site could not render. Only isActive rows are
+// returned.
+router.get("/site/items", getPublicSiteItems);
+
+/**
+ * @swagger
  * /site/ads:
  *   get:
  *     summary: Currently-live adverts for the public website
@@ -132,6 +201,36 @@ router.get("/site/content", getPublicSiteContent);
 // PUBLIC: same reasoning. Scheduled and expired adverts are filtered out in the
 // controller so an ISR-cached page can never keep serving one.
 router.get("/site/ads", getPublicAds);
+
+/**
+ * @swagger
+ * /site/seo:
+ *   get:
+ *     summary: Per-route SEO metadata for the public site (active rows only)
+ *     tags: [Website]
+ *     parameters:
+ *       - in: query
+ *         name: slug
+ *         schema:
+ *           type: string
+ *         description: >
+ *           A route path such as "/" or "/programs". Normalised server-side
+ *           (leading slash enforced, trailing slash and case stripped).
+ *     responses:
+ *       200:
+ *         description: >
+ *           WITH `slug`: `data` is that single row, or `null` when no row
+ *           exists — callers must fall back to their own defaults rather than
+ *           rendering an empty title. WITHOUT `slug`: `data` is the array of
+ *           every active row, which is what the sitemap builder reads.
+ *       400:
+ *         description: The slug was not a usable route path
+ */
+// PUBLIC: this is the <head> of midcitygym.in — generateMetadata() and
+// sitemap.xml both read it during a prerender, before any user exists. Only
+// isActive rows are returned, so retiring a row really does retire it. noIndex
+// rows ARE returned: the frontend needs the flag to emit robots: noindex.
+router.get("/site/seo", getPublicSeoMeta);
 
 /**
  * @swagger
@@ -219,6 +318,65 @@ router.delete(
   deleteSiteContent,
 );
 
+// ============ ADMIN — SITE ITEMS (/website-pages, deliberately shared) ============
+
+/**
+ * NO FIFTH MENU ROW: these reuse /website-pages rather than getting a
+ * /website-items of their own.
+ *
+ * Editing the six programme cards is the same job, done by the same person,
+ * with the same blast radius as editing the hero copy above them — it is all
+ * "the words and pictures on the public site". /seo-manager is split out
+ * because a wrong canonical URL de-indexes a page, a failure no amount of
+ * proofreading can cause; there is no equivalent asymmetry here. A fifth
+ * Website screen would also mean a fifth row to seed, a fifth permission to
+ * grant per role, and a staff member who can edit the hero but mysteriously
+ * not the cards under it.
+ *
+ * Practical consequence: scripts/seedWebsiteMenus.js needs no change for this
+ * phase, and anyone who can already edit page copy can already edit these.
+ */
+router.post(
+  "/site/items-by-params",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/website-pages", "read"),
+  listSiteItemsByParams,
+);
+router.post(
+  "/site/items",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/website-pages", "write"),
+  createSiteItem,
+);
+router.put(
+  "/site/items/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/website-pages", "edit"),
+  updateSiteItem,
+);
+/**
+ * Auth and permission run BEFORE the uploader, as everywhere else in this file:
+ * multer writes bytes (to disk or Blob) as soon as it runs, so a request that
+ * will 401 must be rejected while it is still just headers.
+ *
+ * `?slot=beforeImage` targets a declared image field inside `fields` instead of
+ * `imageUrl` — a transformation has two photos and neither is "the" image.
+ */
+router.post(
+  "/site/items/:id/image",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/website-pages", "edit"),
+  uploadRateLimiter,
+  secureItemImageUpload,
+  uploadSiteItemImage,
+);
+router.delete(
+  "/site/items/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/website-pages", "delete"),
+  deleteSiteItem,
+);
+
 // ============ ADMIN — ADVERTS (/website-adverts) ============
 
 router.post(
@@ -266,6 +424,40 @@ router.put(
   authMiddleware(["ADMIN", "EMPLOYEE"]),
   checkPermission("/website-leads", "edit"),
   updateLead,
+);
+
+// ============ ADMIN — SEO MANAGER (/seo-manager) ============
+
+/**
+ * Its own MenuMaster row, not a sub-permission of /website-pages: editing the
+ * copy on a page and editing what Google is told about it are different jobs
+ * with different blast radii — a wrong canonical URL de-indexes a page, which
+ * no amount of proofreading the hero text can do. Seeded by
+ * scripts/seedWebsiteMenus.js alongside the other three.
+ */
+router.post(
+  "/site/seo-by-params",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/seo-manager", "read"),
+  listSeoByParams,
+);
+router.post(
+  "/site/seo",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/seo-manager", "write"),
+  createSeoMeta,
+);
+router.put(
+  "/site/seo/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/seo-manager", "edit"),
+  updateSeoMeta,
+);
+router.delete(
+  "/site/seo/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/seo-manager", "delete"),
+  deleteSeoMeta,
 );
 
 export default router;
