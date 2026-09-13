@@ -3,33 +3,13 @@
 Read this first, then `todo.md` for the per-phase detail, `plan.md` for why the
 work is shaped the way it is, and `deploy.md` for how to ship it.
 
-## Where things stand
-
-All seven planned phases are **code complete, gate green, and committed**.
-Everything below was verified against the live database on a local production
-stack (Express + Next + the admin SPA), not just built.
-
-| Phase | State |
-|---|---|
-| 0 deployment split | done — front end deploy is the switch-over |
-| 6 admin login page | done |
-| 1 CMS, adverts, leads | done |
-| 1b repeatable CMS content | done |
-| 2 SEO + SEO Manager | done |
-| 4 attendance, reports, exports, audit log | done |
-| 3 QR check-in, trainer login, denials + override | done |
-| 5 class booking, reminders | done |
-| CMS per-page menus (owner request) | server done, **admin screens NOT built** |
-| RBAC restructure (owner request) | done, **one seed not yet applied** |
-
-`npm run test:unit` — **170/170**. Browser gate — **42 checks**, green.
-
-## Production gate result — 2026-09-13, FAILING
+## Production gate — FAILING
 
 The switch-over is live and healthy (`/`, `/admin`, `/api`, `/sitemap.xml`,
-`/robots.txt` all 200; staff login 1531 ms; `sessionId` httpOnly set). But the
-browser gate run against production **fails**, for two separate reasons. Re-run
-it before trusting anything below:
+`/robots.txt` all 200; staff login 1531 ms; `sessionId` httpOnly set). The
+seven planned phases are **code complete and committed**. The browser gate run
+against production still **fails**, for two separate reasons. Re-run it before
+trusting anything below:
 
 ```bash
 cd Gym-Admin
@@ -37,28 +17,40 @@ SA_EMAIL=websupport@barodaweb.net SA_PASS=123456 \
   npm run e2e -- --base https://mid-city-gym.vercel.app
 ```
 
-**1. Unnamed form controls on members / trainers / membership-plans / employee /
-cash-flow / profile — almost certainly a STALE BUNDLE, not a regression.**
-These were fixed in commit `bd21b23` (163 → 0) but the deploy carrying it was
-still in flight when the gate ran; the previous run shows `cancelled` because a
-newer push superseded it. Confirm by re-running the gate once the latest
-`Gym-frontend` deploy is green. If they persist, the fix did not reach the
-bundle and that is the thing to debug.
+Local unit tests and the local browser gate were green when these phases
+landed (`npm run test:unit`, and the gate at 42 checks against a local stack).
+Production is the open question.
 
-**2. React error #418 on `/contact` and `/programs` — REAL, and live now.**
-Two `pageerror`s per page. #418 is a hydration text mismatch: the server-rendered
-HTML and the first client render disagree. It does not blank the page, which is
-why it went unnoticed, but React discards the server HTML for that subtree and
-re-renders on the client — losing the SEO benefit those prerendered pages exist
-for, on exactly the two pages the CMS feeds.
+### Cause 1 — Unnamed form controls (likely stale bundle)
 
-Most likely cause: something rendering non-deterministically between server and
-client in the CMS-driven sections — a date/time formatted with the local
-timezone, or the class timetable's derived day/time axes. Start at
-`src/lib/site-lists.ts` (`buildScheduleGrid`) and the `class-picker` /
-`class-booking` components added in `4f2543a`. Reproduce with
-`npm run build && npm start` locally, then open `/programs` with the console
-open — the non-minified dev build names the mismatching text.
+Failures on members / trainers / membership-plans / employee / cash-flow /
+profile. These were fixed in commit `bd21b23` (163 → 0) but the deploy carrying
+it was still in flight when the gate ran; the previous run shows `cancelled`
+because a newer push superseded it.
+
+**Diagnose:** re-run the gate once the latest `Gym-frontend` deploy is green.
+If the unnamed-control failures clear, this was only a stale bundle. If they
+persist, the fix did not reach the bundle — debug that path, not the form
+screens themselves.
+
+### Cause 2 — React error #418 on `/contact` and `/programs` (real, live now)
+
+Two `pageerror`s per page. #418 is a hydration text mismatch: the server-
+rendered HTML and the first client render disagree. It does not blank the page,
+which is why it went unnoticed, but React discards the server HTML for that
+subtree and re-renders on the client — losing the SEO benefit those prerendered
+pages exist for, on exactly the two pages the CMS feeds.
+
+**Diagnose:** most likely something non-deterministic between server and client
+in the CMS-driven sections — a date/time formatted with the local timezone, or
+the class timetable's derived day/time axes. Start at `src/lib/site-lists.ts`
+(`buildScheduleGrid`) and the `class-picker` / `class-booking` components added
+in `4f2543a`. `Gym-frontend/src/lib/classes.ts` already documents the IST-by-
+hand rule for the same class of bug. Reproduce with `npm run build && npm start`
+locally, then open `/programs` with the console open — the non-minified build
+names the mismatching text.
+
+---
 
 ## Do these first
 
@@ -81,12 +73,31 @@ open — the non-minified dev build names the mismatching text.
    the incoming URL but not from `menu.url`, so a menu row carrying a query
    string resolves to no permission at all).
 
-3. **`admin@barodaweb.net` is now a dead login.** It is a `CompanyMaster` with
-   `isSuperAdmin: false`, so it no longer bypasses RBAC — and a CompanyMaster
-   row has no `roleId`, so it has no permission set either. It gets
-   "No permissions found for this role" on every gated screen. `CompanyMaster`
-   now accepts an optional `roleId`; either set one, make it a super admin, or
-   retire the account.
+3. **Fix React #418 on `/contact` and `/programs`.** Until this is gone, the
+   production gate stays red and the two CMS-fed marketing pages throw away
+   their prerendered HTML on hydrate. Fix the mismatch (do not paper over it
+   with `suppressHydrationWarning` unless the differing text is genuinely
+   client-only and SEO-irrelevant). Re-run the production gate after the
+   frontend deploy that carries the fix.
+
+---
+
+## Where things stand
+
+| Phase | State |
+|---|---|
+| 0 deployment split | done — front end deploy is the switch-over |
+| 6 admin login page | done |
+| 1 CMS, adverts, leads | done |
+| 1b repeatable CMS content | done |
+| 2 SEO + SEO Manager | done |
+| 4 attendance, reports, exports, audit log | done |
+| 3 QR check-in, trainer login, denials + override | done |
+| 5 class booking, reminders | done |
+| CMS per-page menus (owner request) | server done, **admin screens NOT built** |
+| RBAC restructure (owner request) | done, **one seed not yet applied** |
+
+Do not treat `todo.md` as finished while the production gate is red.
 
 ## Accounts
 
@@ -100,6 +111,12 @@ open — the non-minified dev build names the mismatching text.
 
 Verified live: both Vasna accounts get **200** on members and **403** on CMS and
 the SEO Manager.
+
+**`admin@barodaweb.net` is a dead login.** It is a `CompanyMaster` with
+`isSuperAdmin: false`, so it no longer bypasses RBAC — and a CompanyMaster row
+has no `roleId`, so it has no permission set either. It gets "No permissions
+found for this role" on every gated screen. `CompanyMaster` now accepts an
+optional `roleId`; either set one, make it a super admin, or retire the account.
 
 **Linking trap, already hit once:** an `Employee` links to its permission set
 via `EmployeeRoles.roleId` — the FIELD, not the document `_id`.

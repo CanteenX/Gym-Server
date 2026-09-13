@@ -8,10 +8,12 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
 ## Status — 2026-09-13
 
-> **Production gate is FAILING.** See the top of HANDOFF.md. One cause is a
-> stale bundle and should clear on the next deploy; the other is a real React
-> hydration mismatch (#418) on /contact and /programs. Do not treat this
-> checklist as finished until that gate is green.
+> **Production gate is FAILING — do not treat this checklist as finished until
+> that gate is green.** See the top of `HANDOFF.md` for both causes and how to
+> diagnose them: (1) unnamed form controls, almost certainly a stale admin
+> bundle from a superseded deploy; (2) a real React hydration mismatch (#418) on
+> `/contact` and `/programs`. First work after reading this file: apply the
+> branch-role seed, build the `/cms/*` admin screens, fix #418.
 
 
 | Phase | Code | Gate | Live |

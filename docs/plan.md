@@ -1,8 +1,10 @@
 # Mid City Gym — Feature Plan
 
-Status: **verified 2026-09-13 — internally consistent, all decisions
-resolved, ready to execute. Nothing has been built.** The execution checklist is in `todo.md` beside this
-file; every phase there ends with a code-review and browser-testing gate (§8).
+Status: **executed 2026-09-13 — all seven phases code-complete and committed;
+production browser gate still FAILING** (stale-bundle unnamed controls + React
+#418 on `/contact`/`/programs`). See `HANDOFF.md` first, then `todo.md` for the
+checklist; every phase there still ends with a code-review and browser-testing
+gate (§8). Do not treat the plan as closed until that gate is green.
 
 Covers all three repos: `Gym-Server` (API), `Gym-Admin` (staff panel),
 `Gym-frontend` (marketing site + member portal).
