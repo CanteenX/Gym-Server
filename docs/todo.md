@@ -17,23 +17,27 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 | 2 — SEO + SEO Manager | done | passed | blocked |
 | 4 — attendance, reports, audit | done | passed | blocked |
 | 3 — QR check-in + trainer login | done* | passed | blocked |
-| 5 — booking + reminders | in progress | — | — |
+| 5 — booking + reminders | done | passed | ready |
 
 \* three items from the original Phase 3 list did not ship — see the section
 after Phase 3.
 
-**Everything is blocked on one thing, and it is not code.** The Vercel account
-is in a restricted state (`limited: true`); deployments return `BLOCKED` with no
-build logs at all. Check Usage/Billing at vercel.com. Until it clears, every
-commit stays local and Phase 0's live smoke — the one gate nothing else can
-substitute for — cannot run.
+**Deployment works.** An earlier entry here claimed the Vercel account was
+restricted, because the account object carries `limited: true` and one
+production deployment came back `BLOCKED`. That was wrong: `limited` is the
+Hobby-plan flag, not a block — it was equally true minutes earlier when a
+deployment succeeded. The `BLOCKED` was a single transient failure. Proven by
+re-running it: a preview deploy is `READY` and the API deployed to production
+through CI in 52 s with a green smoke test.
 
-Nothing is broken in the meantime: the live site still serves the pre-split
-deployment and is healthy on `/`, `/admin` and `/api`.
+`Gym-Server` is pushed and live. `Gym-Admin` and `Gym-frontend` are committed
+locally and deploy together — the front-end deploy is the **switch-over**, the
+moment `mid-city-gym.vercel.app` starts serving the new Next app with `/api`
+proxied to the API project.
 
-Verified locally instead, against the real database: the full stack runs
+Verified against the real database throughout: the full stack runs locally
 (Express + Next + the admin SPA), the browser gate passes at **42 checks**, and
-`npm run test:unit` is **49/49**.
+`npm run test:unit` is **122/122**.
 
 ---
 
@@ -316,19 +320,57 @@ assumed:
 
 ---
 
-## Phase 5 — Class booking and email reminders (10–14 h) — IN PROGRESS
+## Phase 5 — Class booking and email reminders — DONE
 
-Server half building now. Two things it must get right rather than approximate:
-the capacity check has to be genuinely atomic (a read-then-write loses the race
-and oversells the last slot), and reminders ship in **dry-run by default** so
-the recipient list can be inspected before anything reaches a member's inbox.
+Commits: `5b4ea12` (server) · `fb82744` (fix) · `0ac0c49` (admin) · `4f2543a` (website)
 
 Booking
-- [ ] `ClassSession`, `Booking` models; **atomic** capacity check, proven under
-      concurrency rather than reasoned about
-- [ ] A `Booking` may belong to a member **or** a lead — a prospect with no
-      account is exactly who books a free trial
-- [ ] Public booking form; admin roster; `MenuMaster` rows seeded
+- [x] `ClassSession`, `Booking` models; capacity reserved with a conditional
+      `findOneAndUpdate` whose filter carries the comparison, so Mongo evaluates
+      and increments under one document lock. The 51st caller matches nothing,
+      which *is* the "full" answer — one round trip, no transaction, no retry
+- [x] **Proven under real concurrency, twice.** Offline: 200 simultaneous
+      bookings against 50 seats → exactly 50 succeed. Against the live database:
+      8 against 2 seats → exactly 2 succeed, `bookedCount` lands on 2
+- [x] The suite runs the **naive read-then-write against the identical fake and
+      asserts it oversells**, so it cannot pass vacuously
+- [x] Reserve-then-insert with a compensating release, so a crash leaves the
+      counter one too *high* — drift can only under-fill, never oversell
+- [x] A `Booking` belongs to a member **XOR** a lead; the roster renders both
+- [x] Public booking form with the contact form's honeypot; admin roster with
+      attended / no-show / cancelled; `/class-sessions` menu seeded
+- [x] Full loop verified live: created in admin → visible on the public page
+      after revalidation → booked by a prospect with no account → roster 1/10
+- [x] **Bug found by that test and fixed**: all attempts wrote a `Lead` reading
+      "Booked: <class>", so six *refused* callers were recorded as holding a
+      place and the front desk would have sent them to a full class. Capturing
+      them is right — a refused prospect is worth calling — but the note now
+      reads "Tried to book" and is upgraded only once a seat is actually taken
+
+Reminders
+- [x] Vercel Cron in `vercel.json` → `POST /api/v1/jobs/reminders`
+- [x] `CRON_SECRET` required; unset ⇒ **503, never open**. Verified live
+- [x] Cohorts extracted from the dashboard so the two cannot disagree.
+      Cross-checked against raw data: `Test Expiring Soon` (ends in 2 days) and
+      `Test Payment Due` (expired **and** owes ₹1,200 — correctly in both)
+- [x] `ReminderLog` prevents a double send; seven runs over a 7-day window
+      produce one email; a failed send releases its claim so the next run retries
+- [x] **Dry run by default.** Nothing in a *request* can switch sending on —
+      only `REMINDERS_LIVE=true` on the server
+- [x] Daily cap is 400, not Gmail's 500: the ceiling is account-wide and shared
+      with OTP and lead mail, so exceeding it risks a lock that would take
+      **OTP login down with it**
+
+**Blocking issue for reminders, needs an owner decision**
+- [ ] **0 of 6 members have an email address.** `mobileNumber` is required on
+      `Member`; `email` is optional and unused — members sign in with a mobile
+      number or a `loginId`. The scheduler is correct and skips them with
+      `skippedNoAddress`, so today these emails reach **nobody**. SMS and
+      WhatsApp were declined. Three ways forward: start capturing emails on the
+      member form; reconsider a messaging channel (the scheduler is
+      channel-agnostic by design, so it is a new module not a rewrite); or use
+      the dry-run output as a staff call list, which works today with no new
+      infrastructure. Recommended: the call list now, capturing emails alongside
 
 Reminders
 - [ ] `crons` in `Gym-Server/vercel.json` → `POST /api/v1/jobs/reminders`
