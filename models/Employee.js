@@ -55,10 +55,27 @@ const EmployeeSchema = new mongoose.Schema(
       required: false,
       trim: true,
     },
+    /**
+     * bcrypt hash of the staff password. NEVER leaves the server.
+     *
+     * `select: false`, matching CompanyMaster.password. A handler that answers
+     * with the whole row therefore has nothing to leak, which is what made
+     * this a real leak rather than a theoretical one: GET /employees returned
+     * every staff row, hash included, to any branch admin.
+     *
+     * Exactly one query opts back in — the findOne in loginEmployee, which
+     * needs it for bcrypt.compare. The two resetPassword paths only ASSIGN the
+     * field, which works fine on an unselected path.
+     *
+     * This is the first of three layers; the toJSON/toObject transform below
+     * and middlewares/stripResponseSecrets.js are the other two. Any one of
+     * them stops the leak, and the tests fail if one is removed.
+     */
     password: {
       type: String,
       required: true,
       trim: true,
+      select: false,
     },
     /**
      * Which branch this person may see. `null` means ALL branches.
@@ -113,5 +130,31 @@ const EmployeeSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+/**
+ * The password hash must never survive serialisation to a client.
+ *
+ * This is the ONLY thing standing between a browser and every staff bcrypt
+ * hash: /auth/employee/login answers with `data: employee` — the whole
+ * document — and so do getEmployeeById, listAllEmployees and
+ * listAllEmployeesByDepartment. Rather than remember to `.select("-password")`
+ * on each of them (and on the next one somebody writes), the document itself
+ * refuses to serialise the field. Same pattern as Member.passwordHash and
+ * Trainer.passwordHash.
+ *
+ * toObject as well as toJSON: several handlers build their response with
+ * .toObject() and res.json() then never sees a Mongoose document.
+ *
+ * This does NOT cover .aggregate() or .lean(), which return plain objects the
+ * schema never touches — middlewares/stripResponseSecrets.js is the net for
+ * those.
+ */
+const stripSecrets = (_doc, ret) => {
+  delete ret.password;
+  return ret;
+};
+
+EmployeeSchema.set("toJSON", { transform: stripSecrets });
+EmployeeSchema.set("toObject", { transform: stripSecrets });
 
 export default mongoose.model("Employee", EmployeeSchema);

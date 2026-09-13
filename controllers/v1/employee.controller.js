@@ -674,6 +674,11 @@ export const loginEmployee = async (req, res) => {
     const safeEmail = typeof email === "string" ? email.trim() : "";
 
     const employee = await EmployeeModels.findOne({ emailOffice: safeEmail })
+      // The ONE authorised place that asks for the hash. Employee.password is
+      // `select: false`, so without this bcrypt.compare gets undefined and
+      // every staff login fails. Nothing else in the codebase compares it -
+      // the two resetPassword paths only assign.
+      .select("+password")
       .populate("departmentId")
       .populate("countryId")
       .populate("stateId")

@@ -12,7 +12,25 @@ import EmployeeRoles from "../../models/EmployeeRoles.js";
 
 
 
-// ✅ Helper: find user by email
+/**
+ * ✅ Helper: find user by email
+ *
+ * THE ONLY PLACE IN THIS FILE THAT MAY ASK FOR THE PASSWORD HASH.
+ * `password` is `select: false` on CompanyMaster (models/CompanyMaster.js), so
+ * every other query in the codebase gets a document with no hash on it at all —
+ * which is why returning a whole company/employee row is no longer a leak.
+ * loginCompany needs the hash for bcrypt.compare, so it opts back in here with
+ * `+password`, and only here.
+ *
+ * The Employee query opts in too even though Employee.password is still
+ * selected by default: `+password` is a no-op on a selected field, and it means
+ * staff login through this endpoint keeps working the moment someone finishes
+ * the job and makes Employee.password `select: false` as well.
+ *
+ * The hash still never reaches the client: loginCompany serialises through
+ * toObject(), and both schemas strip `password` in their toJSON/toObject
+ * transforms.
+ */
 const findUserByEmail = async (sanitizedEmail) => {
   const safeEmail = typeof sanitizedEmail === "string" ? sanitizedEmail.trim().toLowerCase() : "";
 
@@ -20,6 +38,7 @@ const findUserByEmail = async (sanitizedEmail) => {
     email: safeEmail,
     isActive: true,
   })
+    .select("+password")
     .populate("countryId")
     .populate("stateId")
     .populate("cityId")
@@ -29,6 +48,7 @@ const findUserByEmail = async (sanitizedEmail) => {
     emailOffice: safeEmail,
     isActive: true,
   })
+    .select("+password")
     .populate("departmentId")
     .populate("stateId")
     .populate("cityId")

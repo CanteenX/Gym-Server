@@ -12,10 +12,26 @@ const CompanyMasterSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    /**
+     * bcrypt hash of the staff password. NEVER leaves the server.
+     *
+     * `select: false` is the primary defence, matching Member.passwordHash and
+     * Trainer.passwordHash: a normal find()/findById() does not load this field
+     * at all, so a handler that returns the whole document — which is what
+     * loginCompany and /companies/getCompanyDetails both did — has nothing to
+     * leak. Only code that genuinely authenticates opts back in with
+     * `.select("+password")`; today that is findUserByEmail() in
+     * controllers/v1/company.controller.js and nowhere else.
+     *
+     * Writes are unaffected: assigning to an unselected path and calling
+     * save() still persists it (see updateCompanyMaster and otp resetPassword).
+     */
     password: {
       type: String,
       required: true,
       trim: true,
+      // Never sent to a client — also stripped in toJSON/toObject below.
+      select: false,
     },
     mobileNumber: {
       type: String,
@@ -153,5 +169,17 @@ const CompanyMasterSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Belt and braces: even if a query explicitly selects password (login does),
+// it must never survive serialisation to a client. loginCompany builds its
+// response with user.toObject(), so the transform has to cover toObject too —
+// toJSON alone would let the login response keep the hash.
+const stripSecrets = (_doc, ret) => {
+  delete ret.password;
+  return ret;
+};
+
+CompanyMasterSchema.set("toJSON", { transform: stripSecrets });
+CompanyMasterSchema.set("toObject", { transform: stripSecrets });
 
 export default mongoose.model("CompanyMaster", CompanyMasterSchema);

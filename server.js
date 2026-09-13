@@ -45,6 +45,7 @@ import {
 import {
   mongoSanitizer
 } from "./middlewares/inputValidator.js";
+import { stripResponseSecrets } from "./middlewares/stripResponseSecrets.js";
 
 // ES6 module equivalent of __dirname and __filename
 const __filename = fileURLToPath(import.meta.url);
@@ -163,6 +164,15 @@ app.use(mongoSanitizer);
 
 // 6. HTTP Parameter Pollution Prevention
 app.use(hpp());
+
+// 7. Credential scrubbing on the way OUT.
+//
+// Wraps res.json for every request, so no bcrypt hash can leave the process
+// even from an .aggregate() or .lean() result, which the schema-level
+// select:false / toJSON transforms cannot reach. Must be mounted before the
+// route handlers — see middlewares/stripResponseSecrets.js for why this is a
+// net and not the fix.
+app.use(stripResponseSecrets);
 
 // ============ STATIC FILE SERVING ============
 app.use("/uploads", express.static("uploads", {
