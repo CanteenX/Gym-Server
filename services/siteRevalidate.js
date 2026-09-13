@@ -30,6 +30,28 @@ const siteOrigin = () =>
  * @returns {Promise<boolean>} whether the site confirmed the refresh
  */
 export const revalidateSite = async (body = {}) => {
+  /**
+   * A deploy hook takes precedence, because a statically shipped site cannot
+   * revalidate a path — the HTML is baked at build time and the only way an
+   * edit reaches a visitor is a rebuild.
+   *
+   * Paste a Vercel Deploy Hook URL into SITE_DEPLOY_HOOK_URL and a CMS save
+   * triggers a redeploy instead (minutes, not seconds — the honest cost of the
+   * static ship). Unset, the ISR path below runs as before, so restoring the
+   * Next deployment needs no code change here.
+   */
+  const hook = (process.env.SITE_DEPLOY_HOOK_URL || "").trim();
+  if (hook) {
+    try {
+      const res = await fetch(hook, { method: "POST" });
+      if (res.ok) return true;
+      console.warn(`[revalidate] deploy hook answered ${res.status}`);
+    } catch (error) {
+      console.warn(`[revalidate] deploy hook failed: ${error?.message || error}`);
+    }
+    return false;
+  }
+
   const origin = siteOrigin();
   const secret = process.env.REVALIDATE_SECRET;
 
@@ -57,6 +79,26 @@ export const revalidateSite = async (body = {}) => {
     });
 
     if (!res.ok) {
+      /**
+       * A 404 here is not a transient hiccup, it is an architecture change, and
+       * it must not read like a warning.
+       *
+       * The site was shipped as static HTML (Next builds were hanging on this
+       * Vercel account), so /internal/revalidate no longer exists. The edit IS
+       * saved — but nothing will put it on the website until the next deploy.
+       * Left as a generic warning, the first person to edit a page and see no
+       * change would reasonably conclude their work was lost.
+       */
+      if (res.status === 404) {
+        console.warn(
+          "[revalidate] /internal/revalidate is GONE (404). The site is " +
+            "currently shipped as static HTML, so it is PUBLISH-ON-DEPLOY: " +
+            "this edit is saved but will not appear until the next deploy. " +
+            "Set SITE_DEPLOY_HOOK_URL to trigger one automatically, or " +
+            "restore the Next deployment to get instant revalidation back.",
+        );
+        return false;
+      }
       console.warn(
         `[revalidate] ${origin} answered ${res.status} for ${JSON.stringify(body)}`,
       );
