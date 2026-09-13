@@ -1,10 +1,10 @@
 # Mid City Gym — Feature Plan
 
-Status: **executed 2026-09-13 — all seven phases code-complete and committed;
-production browser gate still FAILING** (stale-bundle unnamed controls + React
-#418 on `/contact`/`/programs`). See `HANDOFF.md` first, then `todo.md` for the
-checklist; every phase there still ends with a code-review and browser-testing
-gate (§8). Do not treat the plan as closed until that gate is green.
+Status: **closed 2026-09-13 — all seven phases shipped; production browser gate
+GREEN.** CMS per-page `/cms/*` admin screens, branch-role seed, and header/
+footer/social chrome wiring are done. Live site uses a static ship to
+`mid-city-web` (alias `mid-city-gym.vercel.app`) until Vercel Next builds stop
+hanging — see `HANDOFF.md`. `todo.md` holds deferred/owner and unscheduled work.
 
 Covers all three repos: `Gym-Server` (API), `Gym-Admin` (staff panel),
 `Gym-frontend` (marketing site + member portal).

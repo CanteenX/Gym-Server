@@ -3,82 +3,53 @@
 Read this first, then `todo.md` for the per-phase detail, `plan.md` for why the
 work is shaped the way it is, and `deploy.md` for how to ship it.
 
-## Production gate — FAILING
-
-The switch-over is live and healthy (`/`, `/admin`, `/api`, `/sitemap.xml`,
-`/robots.txt` all 200; staff login 1531 ms; `sessionId` httpOnly set). The
-seven planned phases are **code complete and committed**. The browser gate run
-against production still **fails**, for two separate reasons. Re-run it before
-trusting anything below:
+## Production gate — GREEN
 
 ```bash
 cd Gym-Admin
 SA_EMAIL=websupport@barodaweb.net SA_PASS=123456 \
   npm run e2e -- --base https://mid-city-gym.vercel.app
+# GATE PASSED (2026-09-13)
 ```
 
-Local unit tests and the local browser gate were green when these phases
-landed (`npm run test:unit`, and the gate at 42 checks against a local stack).
-Production is the open question.
+`/`, `/programs`, and `/contact` serve **distinct** HTML. Staff login reaches
+`/admin/dashboard`. No React #418 on the marketing routes. Local unit tests
+remain green (`cd Gym-Server && npm run test:unit`).
 
-### Cause 1 — Unnamed form controls (likely stale bundle)
+### What fixed the earlier red gate
 
-Failures on members / trainers / membership-plans / employee / cash-flow /
-profile. These were fixed in commit `bd21b23` (163 → 0) but the deploy carrying
-it was still in flight when the gate ran; the previous run shows `cancelled`
-because a newer push superseded it.
+1. **Same home HTML for every path** — the public alias had been pointing at a
+   wrong project overlay (API serverless + stale shell). Marketing is now a
+   **static ship** from `next build` HTML + `_next/static` + `public/admin`,
+   deployed to Vercel project **`mid-city-web`**, then aliased to
+   `mid-city-gym.vercel.app`. Smoke checks require route-specific markers
+   (`Train With Us`, `id="schedule"`, `Come see`), not status 200 alone.
+2. **Admin client routes 404** — with `cleanUrls: true`, the SPA rewrite must
+   target `/admin` (no `.html`). See `Gym-frontend/scripts/static-ship-vercel.json`.
+3. **Hydration** — `page-header` / home `hero` always render the poster `Image`;
+   `<video>` mounts only after client mount when motion is allowed.
 
-**Diagnose:** re-run the gate once the latest `Gym-frontend` deploy is green.
-If the unnamed-control failures clear, this was only a stale bundle. If they
-persist, the fix did not reach the bundle — debug that path, not the form
-screens themselves.
-
-### Cause 2 — React error #418 on `/contact` and `/programs` (real, live now)
-
-Two `pageerror`s per page. #418 is a hydration text mismatch: the server-
-rendered HTML and the first client render disagree. It does not blank the page,
-which is why it went unnoticed, but React discards the server HTML for that
-subtree and re-renders on the client — losing the SEO benefit those prerendered
-pages exist for, on exactly the two pages the CMS feeds.
-
-**Diagnose:** most likely something non-deterministic between server and client
-in the CMS-driven sections — a date/time formatted with the local timezone, or
-the class timetable's derived day/time axes. Start at `src/lib/site-lists.ts`
-(`buildScheduleGrid`) and the `class-picker` / `class-booking` components added
-in `4f2543a`. `Gym-frontend/src/lib/classes.ts` already documents the IST-by-
-hand rule for the same class of bug. Reproduce with `npm run build && npm start`
-locally, then open `/programs` with the console open — the non-minified build
-names the mismatching text.
+**Trade-off:** static ship restores a green gate but **drops ISR / on-demand
+revalidate** until remote Next builds on this Vercel account stop hanging in
+`UNKNOWN`. A push still refreshes the snapshot. Workflow:
+`Gym-frontend/.github/workflows/deploy-vercel.yml`.
 
 ---
 
 ## Do these first
 
-1. **Apply the branch-role seed.** Written, tested, dry-run verified, NOT applied:
-   ```bash
-   cd Gym-Server
-   npm run seed:branch-roles                          # dry run, writes nothing
-   node scripts/seedBranchRolePermissions.js --apply
-   ```
-   It grants branch roles `/attendance-overview` (read), `/reports`
-   (read+print) and `/class-sessions` (full). All three are already
-   branch-scoped in the controllers, so it widens what a branch admin may *do*,
-   never what they may *see*.
+Nothing blocking the checklist close-out. Remaining work is owner/deferred
+(SMS, payments) or measured-but-unscheduled (187 unlabelled controls,
+attendance page split, `.env` secret rotation). See `todo.md`.
 
-2. **Build the `/cms/*` admin screens.** The server half is finished and
-   seeded: a 13-row CMS menu tree, per-page permissions, and header/footer/social
-   content rows. The admin routes do not exist yet, so those menu entries lead
-   nowhere. See the "Next up" section of `todo.md` — it records the design and
-   the gotcha that drives it (`findMenuIdByUrlInComplete` strips the query from
-   the incoming URL but not from `menu.url`, so a menu row carrying a query
-   string resolves to no permission at all).
+Already done this pass:
 
-3. **Fix React #418 on `/contact` and `/programs`.** Until this is gone, the
-   production gate stays red and the two CMS-fed marketing pages throw away
-   their prerendered HTML on hydrate. Fix the mismatch (do not paper over it
-   with `suppressHydrationWarning` unless the differing text is genuinely
-   client-only and SEO-irrelevant). Re-run the production gate after the
-   frontend deploy that carries the fix.
+- Branch-role seed **applied** (`npm run seed:branch-roles` then `--apply`).
+- Twelve `/cms/*` admin screens shipped (locked wrappers around WebsitePages /
+  SiteItemsManager).
+- `admin@barodaweb.net` **retired** (`node scripts/retireDeadAdmin.js --apply`).
+- Marketing chrome reads CMS `header` / `footer` / `social` with `site.ts`
+  fallbacks (revalidate hooks still coded for when Next hosting returns).
 
 ---
 
@@ -86,7 +57,7 @@ names the mismatching text.
 
 | Phase | State |
 |---|---|
-| 0 deployment split | done — front end deploy is the switch-over |
+| 0 deployment split | done — live via `mid-city-web` + alias |
 | 6 admin login page | done |
 | 1 CMS, adverts, leads | done |
 | 1b repeatable CMS content | done |
@@ -94,10 +65,8 @@ names the mismatching text.
 | 4 attendance, reports, exports, audit log | done |
 | 3 QR check-in, trainer login, denials + override | done |
 | 5 class booking, reminders | done |
-| CMS per-page menus (owner request) | server done, **admin screens NOT built** |
-| RBAC restructure (owner request) | done, **one seed not yet applied** |
-
-Do not treat `todo.md` as finished while the production gate is red.
+| CMS per-page menus (owner request) | done — server + 12 admin `/cms/*` screens |
+| RBAC restructure (owner request) | done — branch-role seed applied |
 
 ## Accounts
 
@@ -110,13 +79,12 @@ Do not treat `todo.md` as finished while the production gate is red.
 | nventra021@gmail.com | Branch Staff (Employee) | Gotri | 123456 |
 
 Verified live: both Vasna accounts get **200** on members and **403** on CMS and
-the SEO Manager.
+the SEO Manager. Branch roles have `/attendance-overview` (read), `/reports`
+(read+print), `/class-sessions` (full).
 
-**`admin@barodaweb.net` is a dead login.** It is a `CompanyMaster` with
-`isSuperAdmin: false`, so it no longer bypasses RBAC — and a CompanyMaster row
-has no `roleId`, so it has no permission set either. It gets "No permissions
-found for this role" on every gated screen. `CompanyMaster` now accepts an
-optional `roleId`; either set one, make it a super admin, or retire the account.
+**`admin@barodaweb.net` is retired** (`isActive: false`). Live SA is
+`websupport@barodaweb.net`. Do not re-activate or `--adopt-company-admins`
+without an explicit owner decision.
 
 **Linking trap, already hit once:** an `Employee` links to its permission set
 via `EmployeeRoles.roleId` — the FIELD, not the document `_id`.
@@ -155,17 +123,22 @@ permissions and locks the account out of everything.
   and every JWT secret. Excluded from the Vercel upload, so not web-reachable,
   but it is in git history.
 - `attendance/page.tsx` is 1226 lines against a 800 guideline.
+- **`/_next/image` 404s on the static ship** — image optimization is a Next
+  runtime feature; static HTML still references `/_next/image?…`. Benign for
+  the gate (not enforced); fix when Next hosting returns, or swap to direct
+  image URLs / a CDN.
 
 ## Deploying
 
-`deploy.md` has the full guide. Short version: push to `main`.
-`Gym-frontend` builds the site **and** the admin panel; `Gym-Server` ships the
-API only; `Gym-Admin` dispatches to `Gym-frontend`.
+`deploy.md` has the full guide. Short version while Next remote builds hang:
 
-`VERCEL_PROJECT_ID` means the **front end** (it kept the original project when
-the deployment split). The API uses `VERCEL_API_PROJECT_ID`.
+1. `Gym-frontend` CI builds Admin into `public/admin`, runs `next build`,
+   assembles `static-ship/` (HTML + `_next/static` + admin +
+   `scripts/static-ship-vercel.json`), deploys with `vercel deploy --archive=tgz`
+   to **`mid-city-web`** (`VERCEL_PROJECT_ID`), aliases `mid-city-gym.vercel.app`.
+2. `Gym-Server` ships the API only (`mid-city-gym-api`).
+3. `Gym-Admin` dispatches to `Gym-frontend` on push.
 
-An earlier note in these docs claimed the Vercel account was restricted. It is
-not — `limited: true` is the Hobby-plan flag, and one `BLOCKED` deployment was
-a transient failure. Deploys work; the API has since shipped to production
-through CI in 52 s.
+When Vercel Next builds work again, restore the previous Next project deploy
+path so ISR and `/_next/image` return. Until then, treat each push as a full
+static snapshot refresh.

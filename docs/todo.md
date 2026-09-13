@@ -8,12 +8,11 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
 ## Status — 2026-09-13
 
-> **Production gate is FAILING — do not treat this checklist as finished until
-> that gate is green.** See the top of `HANDOFF.md` for both causes and how to
-> diagnose them: (1) unnamed form controls, almost certainly a stale admin
-> bundle from a superseded deploy; (2) a real React hydration mismatch (#418) on
-> `/contact` and `/programs`. First work after reading this file: apply the
-> branch-role seed, build the `/cms/*` admin screens, fix #418.
+> **Production gate is GREEN** (`npm run e2e -- --base https://mid-city-gym.vercel.app`).
+> Planned phases + CMS `/cms/*` screens + branch-role seed + chrome CMS wiring
+> are done. Live marketing ships as a **static snapshot** to `mid-city-web`
+> (aliased to `mid-city-gym.vercel.app`) while remote Next builds hang — see
+> `HANDOFF.md`. Remaining items below are deferred/owner or measured-unscheduled.
 
 
 | Phase | Code | Gate | Live |
@@ -38,14 +37,14 @@ deployment succeeded. The `BLOCKED` was a single transient failure. Proven by
 re-running it: a preview deploy is `READY` and the API deployed to production
 through CI in 52 s with a green smoke test.
 
-`Gym-Server` is pushed and live. `Gym-Admin` and `Gym-frontend` are committed
-locally and deploy together — the front-end deploy is the **switch-over**, the
-moment `mid-city-gym.vercel.app` starts serving the new Next app with `/api`
-proxied to the API project.
+`Gym-Server` (API) is live on `mid-city-gym-api`. Marketing + admin ship via
+`Gym-frontend` CI as a **static snapshot** to `mid-city-web`, aliased to
+`mid-city-gym.vercel.app` (remote Next builds currently hang — see
+`HANDOFF.md`).
 
 Verified against the real database throughout: the full stack runs locally
-(Express + Next + the admin SPA), the browser gate passes at **42 checks**, and
-`npm run test:unit` is **122/122**.
+(Express + Next + the admin SPA), the **production** browser gate is green, and
+`npm run test:unit` is green.
 
 ---
 
@@ -436,13 +435,12 @@ row carrying a query string matches nothing, resolves to no `menuId`, and
 `PermissionProtected` denies the route outright. Verified by reading
 `src/context/MenuContext.jsx:409-458`.
 
-**Server half — DONE** (admin and frontend halves are separate work).
+**Server + admin + chrome frontend — DONE** (2026-09-13).
 
-- [ ] Routes `/cms/home`, `/cms/about`, `/cms/programs`, `/cms/pricing`,
+- [x] Routes `/cms/home`, `/cms/about`, `/cms/programs`, `/cms/pricing`,
       `/cms/faqs`, `/cms/trainers`, `/cms/testimonials`, `/cms/classes`,
-      `/cms/contact`, `/cms/header`, `/cms/footer`, `/cms/social` — each
-      rendering the existing editor scoped to its own `pageKey` or
-      `collectionKey`. **Admin panel work, not started here.**
+      `/cms/contact`, `/cms/header`, `/cms/footer`, `/cms/social` — thin locked
+      wrappers (`CmsScreens.jsx`) over `WebsitePages` / `SiteItemsManager`
 - [x] A "CMS" `MenuGroupMaster` with a row per page — `config/cmsMenus.js` holds
       the tree, `scripts/seedCmsMenus.js` creates it. Thirteen rows: nine
       top-level plus a `Content Management` parent (`menuUrl: "#"`,
@@ -472,14 +470,12 @@ row carrying a query string matches nothing, resolves to no `menuId`, and
 - [x] `scripts/tests/cmsPermission.test.mjs` — 37 offline tests, no DB. Proves
       editing `faqs` checks `/cms/faqs` and never `/cms/pricing`, that a super
       admin bypasses before any lookup, that a move needs both ends, and pins
-      `checkPermission`'s four outcomes after its refactor. `npm run test:unit`
-      **122/122**
-- [ ] Nothing on the frontend reads `header`/`footer`/`social` yet, so editing
-      those three screens changes nothing on the live site until the frontend is
-      wired to them. Nav links stay in `src/lib/site.ts` — they are a repeating
-      list and want a `SiteItem` collection, not `header/link-1…n`
+      `checkPermission`'s four outcomes after its refactor
+- [x] Frontend chrome reads `header` / `footer` / `social` via `getSiteChrome()`
+      with `site.ts` fallbacks; revalidate route maps those keys to marketing
+      paths (active again when Next hosting returns)
 - [ ] `transformations` has no `/cms/*` screen (it was not in the twelve
-      requested routes), so it still resolves to `/website-pages`
+      requested routes), so it still resolves to `/website-pages` — **by design**
 
 Upside worth having: per-page permissions become possible, so a staff member
 can be allowed to edit FAQs without being able to touch pricing.
