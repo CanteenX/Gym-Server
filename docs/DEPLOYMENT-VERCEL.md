@@ -251,3 +251,56 @@ and still work, because that project retains the old env vars.
 - The pre-existing issues in the repository `CLAUDE.md` are unchanged and are
   now internet-facing: the unauthenticated CMS write routes and the
   `set-password` / `portal-access` member routes, plus `.env` being committed.
+
+## Vercel project inventory (measured 2026-09-13)
+
+Nothing recorded which project id was which, and the account holds three
+projects with near-identical names. Deploying to the wrong one has already
+happened twice. Read this table before changing any deploy target.
+
+| Project | id | framework | git link | Role |
+|---|---|---|---|---|
+| `mid-city-web` | `prj_hOLqbwADx6VlMBNTXOM31RS5aumE` | null | none | current static-ship target; `mid-city-gym.vercel.app` is aliased here |
+| `mid-city-gym` | `prj_osksXXAG7aoxHY7c6aUS6wZGyMii` | null | none | owns the `mid-city-gym.vercel.app` hostname |
+| `mid-city-gym-broken` | `prj_w6f7sEftE6JIka8cUq2qBA0gTx1i` | **nextjs** | **Gym-Server** | mis-wired, see below |
+| `mid-city-gym-api` | `prj_pjpOziG978CpMyXwF9QY5LrskORl` | null | **Gym-Admin** | the Express API; CI deploys it explicitly |
+
+`npm run` nothing for this — regenerate with the **Vercel inventory** workflow
+in `Gym-frontend/.github/workflows/vercel-inventory.yml` (manual trigger).
+
+### The git links are crossed, and that is the real story
+
+`mid-city-gym-broken` is set to build **Next.js** and is git-linked to
+**Gym-Server**, which is an Express repo with no Next app in it. Every push to
+Gym-Server therefore asked Vercel to build an Express server as a Next site.
+That is what "Next builds hang on this Vercel account" actually was — a
+misconfiguration, not a platform or plan limit. The project was renamed
+`-broken` and the site was re-shipped as static HTML to work around it, which
+cost ISR, on-demand revalidation and `/_next/image` for a problem that was one
+setting.
+
+`mid-city-gym-api` is likewise git-linked to **Gym-Admin** rather than
+Gym-Server. CI deploys it by explicit project id so releases are correct, but
+pushes to Gym-Admin still start builds on it.
+
+Neither link has been changed yet — unlinking a project is an account-level
+action and is the owner's call. Until then, expect stray builds on pushes to
+Gym-Server and Gym-Admin.
+
+### Why deploys never completed
+
+Every deploy run in `Gym-frontend` history died at the same step. `vercel
+deploy` blocks until the build finishes; the upload took 4 seconds and the CLI
+then sat in `Building…` until the 25-minute job timeout killed it. That
+happened even for a 1.6 MB static directory with no framework and nothing to
+compile, which is what rules out any "Next build" explanation for the hang
+itself. An abandoned deployment from one of those runs was checked afterwards
+and found alive and serving, so the builds did finish — the job was simply
+killed before it could alias, which is why production kept serving an old
+release and why `/sitemap.xml` and `/robots.txt` stayed 404 long after the fix
+was pushed.
+
+The workflow now creates the deployment with `--no-wait`, polls `readyState`
+over the REST API on a 45-minute budget, and aliases only after `READY`. A
+stuck queue now degrades to "no new release" instead of "the site is down".
+
