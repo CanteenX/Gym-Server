@@ -22,7 +22,8 @@
     "verify:storage": "node scripts/verifySupabaseStorage.js",
     "repair:rbac": "node scripts/repairRbac.js",
     "audit:integrity": "node scripts/auditIntegrity.js",
-    "seed:currency-menu": "node scripts/seedCurrencyMenu.js"
+    "seed:currency-menu": "node scripts/seedCurrencyMenu.js",
+    "tidy:menus": "node scripts/tidyAdminMenus.js"
   },
   "keywords": [],
   "author": "",
