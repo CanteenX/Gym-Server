@@ -47,11 +47,100 @@ const branchAssignmentError = (req, { branch, isSuperAdmin: wantsSuperAdmin }) =
   if (wantsSuperAdmin === true || wantsSuperAdmin === "true") {
     return "You do not have permission to create or modify a super admin account.";
   }
-  if (!branch) {
-    return "You may only create staff for your own branch, not for all branches.";
-  }
-  if (branch !== own) {
+  /**
+   * An OMITTED branch is no longer refused, it is PINNED — see
+   * resolveAssignedBranch() below. For a branch admin the branch is not a
+   * choice made on a form, it is a fact about who is logged in, and the
+   * owner's requirement is that they "have control over their department and
+   * employees". Refusing instead meant Setup -> Employee failed with "You may
+   * only create staff for your own branch, not for all branches" whenever the
+   * branch select had not been touched — including on every EDIT, where the
+   * form does not always resend it.
+   *
+   * Naming a DIFFERENT branch is still refused: that is an attempt to widen,
+   * not an omission.
+   */
+  if (branch && branch !== own) {
     return `You may only create staff for the ${own} branch.`;
+  }
+  return null;
+};
+
+/**
+ * The branch a staff row must actually LAND IN, given who is creating it.
+ *
+ * A super admin gets what they asked for ("" / undefined normalising to null,
+ * the "all branches" sentinel). A branch admin ALWAYS gets their own branch,
+ * never the request body: branchAssignmentError() has already refused any
+ * attempt to name a different one, so the only cases left here are "mine" and
+ * "unspecified", and both must resolve to mine. Deriving it from the session
+ * rather than echoing req.body is what makes "a branch admin cannot create
+ * staff in the other branch" true of the STORED ROW, and not merely of the
+ * validation that ran just before it.
+ */
+const resolveAssignedBranch = (req, branch) => {
+  if (isSuperAdmin(req)) return branch || null;
+  return scopedBranch(req);
+};
+
+/**
+ * The branch filter for STAFF listings. Fail-closed, unlike scopeFilter().
+ *
+ * scopeFilter() answers `{}` for a super admin AND for an account that has no
+ * branch and is not a super admin, because `branch: null` is precisely how
+ * "all branches" is recorded and the helper cannot tell the two apart. For a
+ * misconfigured staff account that conflation would hand over the entire staff
+ * directory — and, through the by-id routes, the ability to manage every admin
+ * in the business. So that case matches NOTHING here instead. Same reasoning
+ * as branchAssignmentError()'s `if (!own)` arm: a misconfiguration must grant
+ * less, never more.
+ *
+ * Returns a filter fragment to spread LAST, same contract as scopeFilter().
+ */
+const staffScopeFilter = (req) => {
+  const own = scopedBranch(req);
+  if (own) return { branch: own };
+  if (isSuperAdmin(req)) return {};
+  // _id is always set on a persisted document, so this can never match.
+  return { _id: null };
+};
+
+/**
+ * Guards reaching one SPECIFIC staff row by id (read, edit, delete, password
+ * reset).
+ *
+ * ============================================================================
+ * THIS IS THE ACTUAL SECURITY BOUNDARY — NOT THE LIST FILTER.
+ * ============================================================================
+ *
+ * Filtering a list is cosmetic on its own: if GET/PUT/DELETE /employees/:id
+ * still answer for a row from the other branch when the id is typed directly,
+ * a Gotri admin reads and edits Vasna's staff with one curl. Ids are not
+ * secrets — they travel in URLs, exports, screenshots and the admin panel's
+ * own network tab. Every by-id handler in this file therefore re-checks the
+ * row it just loaded, rather than trusting that the caller could only have
+ * learned the id from a list they were allowed to see.
+ *
+ * Super admins are off-limits to a branch admin regardless of branch. A super
+ * admin row carries `branch: null`, so the branch comparison alone would
+ * already refuse it, but stating it explicitly keeps the rule true if that
+ * sentinel ever changes: editing or resetting the owner's account is a
+ * takeover of the whole system, not merely a cross-branch read.
+ *
+ * Returns an error string to refuse with, or null to allow.
+ */
+const employeeAccessError = (req, employee) => {
+  const own = scopedBranch(req);
+  if (!own) {
+    // Unrestricted only if that null means "super admin". A branchless
+    // non-super-admin is misconfigured; see staffScopeFilter().
+    return isSuperAdmin(req)
+      ? null
+      : "This account is not assigned to a branch, so it cannot manage staff. " +
+          "A super admin must assign it a branch first.";
+  }
+  if (employee.isSuperAdmin === true || employee.branch !== own) {
+    return "You may only manage staff belonging to your own branch.";
   }
   return null;
 };
@@ -124,9 +213,11 @@ export const createEmployee = async (req, res) => {
       address,
       password: hashedPassword,
       isActive,
-      // Normalised to null rather than "" so it matches the "all branches"
-      // sentinel the scope helpers expect.
-      branch: branch || null,
+      // Derived from the SESSION, not echoed from req.body — a branch admin's
+      // new staff always land in their own branch. Normalised to null rather
+      // than "" so it matches the "all branches" sentinel the scope helpers
+      // expect.
+      branch: resolveAssignedBranch(req, branch),
       isSuperAdmin: wantsSuperAdmin === true || wantsSuperAdmin === "true",
       createdBy: req.user.role === "EMPLOYEE" ? req.user.id : null,
     });
@@ -200,11 +291,11 @@ export const updateEmployee = async (req, res) => {
 
     // A branch admin must not be able to reach ACROSS branches to edit someone
     // else's staff — or to edit a super admin and take over the account.
-    const ownBranch = scopedBranch(req);
-    if (ownBranch && (employee.isSuperAdmin || employee.branch !== ownBranch)) {
+    const accessError = employeeAccessError(req, employee);
+    if (accessError) {
       return res.status(403).json({
         isOk: false,
-        message: "You may only manage staff belonging to your own branch.",
+        message: accessError,
         status: 403,
       });
     }
@@ -274,6 +365,20 @@ export const deleteEmployee = async (req, res) => {
       });
     }
 
+    // Load-then-check, not a scoped delete query: a scoped
+    // findOneAndDelete({_id, branch}) would report "not found" for a row that
+    // exists in the other branch, which is indistinguishable from a genuine
+    // 404 and hides a real attempt to cross the boundary. Refusing explicitly
+    // keeps the two apart. See employeeAccessError().
+    const accessError = employeeAccessError(req, employee);
+    if (accessError) {
+      return res.status(403).json({
+        isOk: false,
+        message: accessError,
+        status: 403,
+      });
+    }
+
     await EmployeeModels.findByIdAndDelete(employeeId).exec();
 
     return res.status(200).json({
@@ -310,6 +415,17 @@ export const getEmployeeById = async (req, res) => {
       });
     }
 
+    // The list being filtered does not make this row unreachable — the id is
+    // all anyone needs, and this handler is what the Edit screen calls.
+    const accessError = employeeAccessError(req, employee);
+    if (accessError) {
+      return res.status(403).json({
+        isOk: false,
+        message: accessError,
+        status: 403,
+      });
+    }
+
     return res.status(200).json({
       isOk: true,
       data: employee,
@@ -327,8 +443,12 @@ export const getEmployeeById = async (req, res) => {
 
 export const listAllEmployees = async (req, res) => {
   try {
+    // Spread LAST so it is authoritative. Without it this endpoint returned
+    // the WHOLE staff directory to every branch admin, quietly undoing the
+    // scoping on /employees/search next to it.
     const employees = await EmployeeModels.find({
       isActive: true,
+      ...staffScopeFilter(req),
     })
       .populate("departmentId")
       .populate("countryId")
@@ -371,17 +491,37 @@ export const listEmployeesByParams = async (req, res) => {
       matchCondition.isActive = safeIsActive;
     }
 
-    // Employee can see:
-    // 1. His own record
-    // 2. Employees created by him
-    if (req.user.role === "EMPLOYEE") {
-      matchCondition.createdBy = new mongoose.Types.ObjectId(req.user.id);
-    }
-
-    // Branch scope, derived from the session — never from req.body. Applied
-    // after the client's own conditions so it cannot be widened by the request.
-    const ownBranch = scopedBranch(req);
-    if (ownBranch) matchCondition.branch = ownBranch;
+    /**
+     * ========================================================================
+     * WHY THERE IS NO LONGER A createdBy FILTER HERE.
+     * ========================================================================
+     *
+     * This used to read:
+     *
+     *     if (req.user.role === "EMPLOYEE") {
+     *       matchCondition.createdBy = new mongoose.Types.ObjectId(req.user.id);
+     *     }
+     *
+     * — a per-creator hierarchy: you may see the staff YOU created. Every
+     * branch admin is an Employee login, and branch admins are created BY the
+     * super admin, so they had created nobody and this endpoint answered with
+     * an empty list. Measured against production: the super admin saw 6-7
+     * staff across both gyms, the Vasna admin saw ZERO and could not manage
+     * their own reception desk at all. The bug was invisible — an empty table
+     * reads as "no staff yet", not as "you were filtered out".
+     *
+     * Ownership is also the wrong model for the owner's requirement: staff
+     * belong to a BRANCH, not to whoever happened to type them in. Two Vasna
+     * admins must both see the Vasna desk; neither may see Gotri's. So the
+     * hierarchy is replaced by the branch scope, which is what every other
+     * list in this codebase already uses.
+     *
+     * Derived from the SESSION, never from req.body, and spread LAST so a
+     * client-supplied branch can narrow a super admin but can never widen a
+     * branch admin. Fail-closed for a branchless non-super-admin — see
+     * staffScopeFilter().
+     */
+    matchCondition = { ...matchCondition, ...staffScopeFilter(req) };
 
     const safeMatch = typeof match === "string" ? match.trim() : "";
 
@@ -505,9 +645,12 @@ export const listAllEmployeesByDepartment = async (req, res) => {
   try {
     const { departmentId } = req.params;
 
+    // Same boundary as every other staff read: a department is not a branch,
+    // and one department can span both gyms.
     const employees = await EmployeeModels.find({
       departmentId,
       isActive: true,
+      ...staffScopeFilter(req),
     });
 
     return res.status(200).json({
@@ -794,6 +937,22 @@ export const resetPassword = async (req, res) => {
         status: 400,
       });
     }
+
+    // Setting someone's password IS taking over their account, so this needs
+    // the same boundary as edit and delete — arguably more. The route is
+    // authMiddleware(["ADMIN"]) today, which keeps Employee logins out but
+    // does NOT keep out a second, non-super CompanyMaster admin; role is which
+    // table you logged in from, not how much you may do. See
+    // middlewares/superAdmin.js.
+    const accessError = employeeAccessError(req, employee);
+    if (accessError) {
+      return res.status(403).json({
+        isOk: false,
+        message: accessError,
+        status: 403,
+      });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     employee.password = hashedPassword;
