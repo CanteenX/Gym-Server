@@ -14,6 +14,7 @@ import dotenv from "dotenv";
 import MenuGroupMaster from "../models/MenuGroupMaster.js";
 import MenuMaster from "../models/MenuMaster.js";
 import { seedWebsiteMenus } from "./seedWebsiteMenus.js";
+import { seedInsightsMenus } from "./seedInsightsMenus.js";
 
 const seedFaqMenus = async () => {
   try {
@@ -158,6 +159,15 @@ export async function seedAllMenus() {
     await seedWebsiteMenus();
   } catch (err) {
     console.error("❌ Error seeding Website menus =>", err);
+  }
+  // Same reasoning as the Website group: the attendance-overview, reports and
+  // audit-log routes all apply checkPermission, which 403s when the menu row is
+  // missing. Boot-time seeding keeps those screens reachable on the PM2
+  // deployment; the serverless pipeline runs `npm run seed:insights-menus`.
+  try {
+    await seedInsightsMenus();
+  } catch (err) {
+    console.error("❌ Error seeding Insights menus =>", err);
   }
 }
 

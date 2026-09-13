@@ -93,4 +93,24 @@ AttendanceSchema.index({ memberId: 1, date: 1 }, { unique: true });
 /** The recent-activity list reads newest-first for one member. */
 AttendanceSchema.index({ memberId: 1, checkInAt: -1 });
 
+/**
+ * Staff footfall: "check-ins at this branch between these two dates".
+ *
+ * Added for the staff attendance views (Phase 4). Every index above is keyed on
+ * memberId, which is right for the member portal and useless for the panel —
+ * a branch/date question against a memberId index is a collection scan that
+ * grows with every visit ever recorded. Branch first because it is an equality
+ * match and date is a range, which is the order a compound index needs.
+ */
+AttendanceSchema.index({ branch: 1, date: 1 });
+
+/**
+ * "Who is in the gym right now": open sessions at a branch, newest first.
+ *
+ * checkOutAt leads because the query is `checkOutAt: null` — an equality match
+ * that selects the handful of open rows out of the whole history before branch
+ * or time are considered.
+ */
+AttendanceSchema.index({ checkOutAt: 1, branch: 1, checkInAt: -1 });
+
 export default mongoose.model("Attendance", AttendanceSchema);

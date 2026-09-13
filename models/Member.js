@@ -249,6 +249,19 @@ const MemberSchema = new mongoose.Schema(
 // The dashboard queries by expiry window and active flag constantly.
 MemberSchema.index({ endDate: 1, isActive: 1 });
 MemberSchema.index({ trainerId: 1 });
+
+/**
+ * Branch-scoped reporting (Phase 4: expiry pipeline, member ageing, the
+ * not-checked-in call list).
+ *
+ * The index above is keyed on endDate first, which suits the unscoped
+ * dashboard. Every reporting query starts from a branch instead — branch is an
+ * equality match coming from the session and it is never absent for a branch
+ * admin — so it has to lead, or the query scans both branches and filters in
+ * memory.
+ */
+MemberSchema.index({ branch: 1, endDate: 1 });
+MemberSchema.index({ branch: 1, isActive: 1, startDate: 1 });
 MemberSchema.index({ mobileNumber: 1 }, { unique: true });
 
 // Unique only among members who actually have a custom ID. A plain unique

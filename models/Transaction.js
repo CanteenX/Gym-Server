@@ -150,6 +150,28 @@ const TransactionSchema = new mongoose.Schema(
 TransactionSchema.index({ transactionDate: -1, direction: 1 });
 
 /**
+ * The SCOPED version of the index above, added for Phase 4's reports and the
+ * CSV export.
+ *
+ * Every money query a branch admin makes is pinned to `{ branch: <theirs> }` by
+ * financialScopeFilter, and the index above cannot use that: it would scan the
+ * whole date window across both branches plus Common and discard most of it.
+ * Branch leads because it is the equality match; the date range and direction
+ * follow. A super admin's unscoped query still falls back to the index above.
+ */
+TransactionSchema.index({ branch: 1, transactionDate: -1, direction: 1 });
+
+/**
+ * "What has this member actually paid, since this date" — the correlated
+ * lookup behind the member-ageing report, which derives outstanding dues from
+ * this ledger rather than from Member.payments (cleared on renewal).
+ *
+ * memberId had no index at all before this; the lookup runs once per member in
+ * the report, so without it the report is a collection scan per member.
+ */
+TransactionSchema.index({ memberId: 1, direction: 1, transactionDate: -1 });
+
+/**
  * Receipt numbers must be unique, but only where one actually exists.
  *
  * A partial index is used rather than `sparse`, because sparse only skips

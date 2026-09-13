@@ -9,6 +9,25 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import hpp from "hpp";
 import session from "express-session";
+
+/**
+ * ============ AUDIT LOG — THIS IMPORT MUST STAY FIRST ============
+ *
+ * services/auditLog.js calls `mongoose.plugin()` at module scope, and a global
+ * plugin only reaches schemas compiled AFTER that call. ESM evaluates import
+ * declarations in TEXTUAL order, so being the first relative import is what
+ * guarantees every model below it is audited.
+ *
+ * Move it down the file — below a route import, say — and the models pulled in
+ * above it silently stop producing audit rows. Nothing throws and nothing is
+ * logged; the trail just has holes in it.
+ *
+ * Side-effect import on purpose: it registers the plugin, it exports nothing
+ * this file needs.
+ */
+import "./services/auditLog.js";
+import { requestContext } from "./middlewares/requestContext.js";
+
 import { IS_SERVERLESS, IS_LONG_RUNNING } from "./config/runtime.js";
 import { connectDB } from "./config/db.js";
 
@@ -214,6 +233,23 @@ app.use(session({
 
 console.log("✅ Express session middleware configured (MongoDB storage)");
 
+/**
+ * 8. Per-request context (AsyncLocalStorage), for the audit log.
+ *
+ * ORDER IS THE WHOLE POINT OF THIS LINE:
+ *   - AFTER express-session, or `req.session` does not exist yet and every
+ *     audit row would be written with no actor;
+ *   - BEFORE the route table, or handlers run outside the store and the
+ *     mongoose hooks in services/auditLog.js find nothing to attribute a write
+ *     to. They fail closed — no actor means no row — so a misplacement here is
+ *     an audit log that is quietly empty rather than an error anybody sees.
+ *
+ * It stores the request itself, not a snapshot of the user: the login handler
+ * populates req.session.user partway through a request, and a snapshot taken
+ * here would still be null by the time a hook fires.
+ */
+app.use(requestContext);
+
 mongoose.set("strictQuery", false);
 // Query logging is very noisy and echoes document contents into the log drain;
 // opt in explicitly rather than shipping it on by default.
@@ -333,6 +369,8 @@ import attendanceRoutes from "./routes/v1/attendance.routes.js";
 import workoutRoutes from "./routes/v1/workout.routes.js";
 import branchRoutes from "./routes/v1/branches.routes.js";
 import siteRoutes from "./routes/v1/site.routes.js";
+import reportRoutes from "./routes/v1/reports.routes.js";
+import auditLogRoutes from "./routes/v1/auditLog.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -363,6 +401,11 @@ app.use("/api/v1", branchRoutes);
 // Public website surface (marketing copy, adverts, leads). Must stay under
 // /api/ — the SPA catch-all below swallows anything that is not.
 app.use("/api/v1", siteRoutes);
+// Reports, CSV exports and the audit-log viewer. Same flat mount as everything
+// else, and — like every other route file — they must stay under /api/ or the
+// SPA catch-all below swallows them.
+app.use("/api/v1", reportRoutes);
+app.use("/api/v1", auditLogRoutes);
 
 console.log("✅ V1 API routes loaded");
 
