@@ -27,7 +27,7 @@ import assert from "node:assert/strict";
 import MenuMaster from "../../models/MenuMaster.js";
 import EmployeeRoles from "../../models/EmployeeRoles.js";
 import SiteContent from "../../models/SiteContent.js";
-import SiteItem from "../../models/SiteItem.js";
+import SiteItem, { SITE_ITEM_COLLECTIONS } from "../../models/SiteItem.js";
 
 import {
   cmsPermission,
@@ -72,6 +72,15 @@ const MENU_IDS = {
   "/cms/header": "menu-cms-header",
   "/cms/footer": "menu-cms-footer",
   "/cms/social": "menu-cms-social",
+  "/cms/transformations": "menu-cms-transformations",
+  // Site chrome, added when every remaining hardcoded string in
+  // Gym-frontend/src/lib/site.ts was given a CMS home.
+  "/cms/site": "menu-cms-site",
+  "/cms/stats": "menu-cms-stats",
+  "/cms/marquee": "menu-cms-marquee",
+  "/cms/navlinks": "menu-cms-navlinks",
+  "/cms/branches": "menu-cms-branches",
+  "/cms/media": "menu-cms-media",
   // Not a CMS screen. Present so a fixture can hold a real permission on
   // something ELSE, which is what puts the session on the normal code path.
   "/seo-manager": "menu-seo-manager",
@@ -262,15 +271,24 @@ test("the seeded tree and the two key maps cannot drift apart", () => {
     [...leaves].sort(),
     [
       "/cms/about",
+      // The two branch CARDS on the public site (phone, hours, blurb, map
+      // link). NOT /branch-master, which edits the operational branch records
+      // whose name is stored on every member row and every transaction.
+      "/cms/branches",
       "/cms/classes",
       "/cms/contact",
       "/cms/faqs",
       "/cms/footer",
       "/cms/header",
       "/cms/home",
+      "/cms/marquee",
+      "/cms/media",
+      "/cms/navlinks",
       "/cms/pricing",
       "/cms/programs",
+      "/cms/site",
       "/cms/social",
+      "/cms/stats",
       "/cms/testimonials",
       "/cms/trainers",
       "/cms/transformations",
@@ -281,7 +299,140 @@ test("the seeded tree and the two key maps cannot drift apart", () => {
   const parent = CMS_MENU_TREE.find((r) => r.menuName === "Content Management");
   assert.ok(parent, "the Content Management parent row is missing");
   assert.equal(parent.menuUrl, "#", "a parent row must not carry a real path");
-  assert.equal(parent.children.length, 7);
+  assert.equal(parent.children.length, 12);
+});
+
+// ===================================================================
+// 1b. The site-chrome keys, added when the owner asked for EVERY string on
+//     the website to be editable.
+//
+// These are pinned INDIVIDUALLY rather than left to the drift test above,
+// because that test only proves a mapped URL is somewhere in the tree. It
+// would stay green if `stats` and `marquee` were pointed at each other's
+// screen — which is the mistake that actually happens when five near-identical
+// rows are added in one go, and which would hand a marquee-only editor the
+// hero counters.
+// ===================================================================
+
+test("every site-chrome list resolves its OWN screen", () => {
+  assert.equal(menuUrlForCollectionKey("stats"), "/cms/stats");
+  assert.equal(menuUrlForCollectionKey("marquee"), "/cms/marquee");
+  assert.equal(menuUrlForCollectionKey("navlinks"), "/cms/navlinks");
+  assert.equal(menuUrlForCollectionKey("branches"), "/cms/branches");
+  assert.equal(menuUrlForCollectionKey("media"), "/cms/media");
+
+  // And none of them silently landed on the all-pages grant, which is what an
+  // entry missing from CMS_COLLECTION_MENUS looks like from the outside.
+  for (const key of ["stats", "marquee", "navlinks", "branches", "media"]) {
+    assert.notEqual(
+      menuUrlForCollectionKey(key),
+      CMS_FALLBACK_MENU_URL,
+      `${key} fell back to the all-pages permission`,
+    );
+  }
+});
+
+test("the brand facts page resolves /cms/site, not the header or footer screen", () => {
+  assert.equal(menuUrlForPageKey("site"), "/cms/site");
+  assert.notEqual(menuUrlForPageKey("site"), "/cms/header");
+  assert.notEqual(menuUrlForPageKey("site"), "/cms/footer");
+});
+
+test("the CMS branch cards are not the Branch Master screen", () => {
+  // /branch-master edits models/Branch.js, whose `name` is the literal string
+  // stored on every member, trainer, attendance row and transaction. A staff
+  // member granted "edit the branch cards on the website" must not thereby be
+  // able to rename a tenancy key.
+  assert.equal(menuUrlForCollectionKey("branches"), "/cms/branches");
+  assert.notEqual(menuUrlForCollectionKey("branches"), "/branch-master");
+  assert.ok(!cmsLeafMenuUrls().includes("/branch-master"));
+});
+
+test("every SiteItem collection the model knows about has its own CMS screen", () => {
+  // The standing drift risk from here on: someone adds a list to
+  // SITE_ITEM_COLLECTIONS and forgets config/cmsMenus.js. Nothing errors — the
+  // list simply falls back to /website-pages, so editing it quietly requires
+  // the all-pages grant, which is the exact thing the per-page restructure
+  // exists to avoid. This is what makes that loud.
+  for (const key of SITE_ITEM_COLLECTIONS) {
+    const url = menuUrlForCollectionKey(key);
+    assert.notEqual(
+      url,
+      CMS_FALLBACK_MENU_URL,
+      `SiteItem collection '${key}' has no /cms/* screen in config/cmsMenus.js`,
+    );
+    assert.ok(
+      cmsLeafMenuUrls().includes(url),
+      `${key} maps to ${url}, which the menu seed never creates`,
+    );
+  }
+});
+
+test("a stats-only editor cannot touch the marquee, and the mirror case", async () => {
+  const statsEditor = staff({ "/cms/stats": ["edit"] }, { params: { id: "row-s1" } });
+  const ownList = await run(
+    cmsPermission("edit", siteItemDocTargets),
+    statsEditor,
+    { collectionKey: "stats" },
+  );
+  assert.equal(ownList.passed, true);
+  assert.deepEqual(ownList.lookedUp, ["/cms/stats"]);
+
+  const otherList = staff({ "/cms/stats": ["edit"] }, { params: { id: "row-s2" } });
+  const refused = await run(
+    cmsPermission("edit", siteItemDocTargets),
+    otherList,
+    { collectionKey: "marquee" },
+  );
+  assert.equal(refused.passed, false);
+  assert.equal(refused.status, 403);
+  assert.match(refused.message, /\/cms\/marquee/);
+});
+
+test("editing a branch CARD checks /cms/branches and nothing else", async () => {
+  const req = staff({ "/cms/branches": ["edit"] }, { params: { id: "row-b1" } });
+  const result = await run(
+    cmsPermission("edit", siteItemDocTargets),
+    req,
+    { collectionKey: "branches" },
+  );
+
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.lookedUp, ["/cms/branches"]);
+});
+
+test("the site-identity rows are gated on /cms/site", async () => {
+  const granted = staff({ "/cms/site": ["edit"] }, { params: { id: "block-s1" } });
+  const allowed = await run(
+    cmsPermission("edit", siteContentDocTargets),
+    granted,
+    { pageKey: "site" },
+  );
+  assert.equal(allowed.passed, true);
+  assert.deepEqual(allowed.lookedUp, ["/cms/site"]);
+
+  // A header editor is NOT a brand-facts editor: the wordmark and the brand
+  // name are two different rows on two different screens.
+  const headerOnly = staff({ "/cms/header": ["edit"] }, { params: { id: "block-s2" } });
+  const refused = await run(
+    cmsPermission("edit", siteContentDocTargets),
+    headerOnly,
+    { pageKey: "site" },
+  );
+  assert.equal(refused.passed, false);
+  assert.equal(refused.status, 403);
+});
+
+test("/website-pages still covers the new chrome lists, so existing roles keep working", async () => {
+  for (const collectionKey of ["stats", "marquee", "navlinks", "branches", "media"]) {
+    const req = staff({ "/website-pages": ["edit"] }, { params: { id: "row-c" } });
+    const result = await run(
+      cmsPermission("edit", siteItemDocTargets),
+      req,
+      { collectionKey },
+    );
+    assert.equal(result.passed, true, `/website-pages must cover ${collectionKey}`);
+  }
 });
 
 // ===================================================================

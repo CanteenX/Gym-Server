@@ -64,6 +64,14 @@ export const CMS_FALLBACK_MENU_URL = "/website-pages";
  *   pricing   RESERVED — the pricing table is a SiteItem list ("plans"), and
  *             the page carries no prose block of its own yet
  *   faqs      RESERVED — same shape as pricing
+ *   site      seeded by this change: identity, location — the brand facts
+ *             (name, tagline, bio, city, region, country) that
+ *             Gym-frontend/src/lib/site.ts `site` held hardcoded and that
+ *             thirteen components read. They are their own page rather than
+ *             more `header`/`footer` rows because they are not chrome: the
+ *             header renders a wordmark and the footer a copyright line, both
+ *             of which are already editable there, while these are the facts
+ *             those strings are ABOUT and are also what the JSON-LD publishes.
  */
 export const CMS_PAGE_MENUS = Object.freeze({
   home: "/cms/home",
@@ -75,6 +83,7 @@ export const CMS_PAGE_MENUS = Object.freeze({
   header: "/cms/header",
   footer: "/cms/footer",
   social: "/cms/social",
+  site: "/cms/site",
 });
 
 /**
@@ -101,6 +110,15 @@ export const CMS_PAGE_MENUS = Object.freeze({
  * checkPermission would silently fall through to the fallback anyway. The two
  * always move together, which is what the drift test in
  * scripts/tests/cmsPermission.test.mjs pins.
+ *
+ * THE FIVE CHROME LISTS BELOW ARE IDENTITY MAPPINGS — collectionKey === the
+ * last path segment — and that is a deliberate departure from `plans →
+ * /cms/pricing`. `plans` earned its rename because the owner already calls that
+ * screen "Pricing"; there is no established vocabulary for these five yet, and
+ * an identity mapping is the one shape a second person cannot get wrong when
+ * they add the matching route in Gym-Admin. The sidebar LABEL still says
+ * whatever reads best ("Navigation", "Background Media") — a menuName may
+ * differ from its URL, a URL may not differ from the admin route.
  */
 export const CMS_COLLECTION_MENUS = Object.freeze({
   programs: "/cms/programs",
@@ -110,6 +128,11 @@ export const CMS_COLLECTION_MENUS = Object.freeze({
   testimonials: "/cms/testimonials",
   classes: "/cms/classes",
   transformations: "/cms/transformations",
+  stats: "/cms/stats",
+  marquee: "/cms/marquee",
+  navlinks: "/cms/navlinks",
+  branches: "/cms/branches",
+  media: "/cms/media",
 });
 
 /**
@@ -192,6 +215,50 @@ export const CMS_MENU_TREE = Object.freeze([
         sequence: 7,
         icon: "ri-gallery-line",
       },
+      // ---- SITE CHROME LISTS ----
+      // Appended at 8-12 for the same reason Transformations went last: the
+      // seven rows above have been in the owner's sidebar since the
+      // restructure shipped, and renumbering them would move every entry under
+      // the cursor for screens that are new.
+      {
+        menuName: "Stats",
+        menuUrl: "/cms/stats",
+        sequence: 8,
+        icon: "ri-bar-chart-2-line",
+      },
+      {
+        menuName: "Marquee",
+        menuUrl: "/cms/marquee",
+        sequence: 9,
+        icon: "ri-text-spacing",
+      },
+      {
+        // Labelled "Navigation" but routed at /cms/navlinks: the URL matches the
+        // collectionKey exactly (see CMS_COLLECTION_MENUS), the label is what
+        // the owner would look for in a sidebar.
+        menuName: "Navigation",
+        menuUrl: "/cms/navlinks",
+        sequence: 10,
+        icon: "ri-links-line",
+      },
+      {
+        // NOT the Branch Master at /branch-master. That screen edits the
+        // operational branch records whose `name` is stored on every member,
+        // trainer and transaction; this one edits the two branch CARDS on the
+        // public site — phone, hours, blurb, map link. Two different sidebar
+        // entries reading "Branches" is a little awkward, which is why this one
+        // says "Branch Cards".
+        menuName: "Branch Cards",
+        menuUrl: "/cms/branches",
+        sequence: 11,
+        icon: "ri-map-pin-2-line",
+      },
+      {
+        menuName: "Background Media",
+        menuUrl: "/cms/media",
+        sequence: 12,
+        icon: "ri-film-line",
+      },
     ],
   },
   {
@@ -211,6 +278,16 @@ export const CMS_MENU_TREE = Object.freeze([
     menuUrl: "/cms/social",
     sequence: 7,
     icon: "ri-instagram-line",
+  },
+  {
+    // The brand facts themselves — name, tagline, bio, city, region, country.
+    // Top-level rather than under Content Management because it is a form, not
+    // a list, and it sits next to Header / Footer / Social as the fourth piece
+    // of "the site as a whole" rather than "a page of it".
+    menuName: "Site Identity",
+    menuUrl: "/cms/site",
+    sequence: 8,
+    icon: "ri-shield-star-line",
   },
 ]);
 

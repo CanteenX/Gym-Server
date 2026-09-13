@@ -25,7 +25,7 @@ import mongoose from "mongoose";
  */
 
 /**
- * The seven lists the marketing site renders today.
+ * The twelve lists the marketing site renders today.
  *
  * NOT an enum on the schema, for the same reason SiteContent.pageKey is not
  * one: the website grows a new list far more often than the API ships, and an
@@ -41,6 +41,25 @@ export const SITE_ITEM_COLLECTIONS = [
   "classes",
   "testimonials",
   "transformations",
+  // ---- SITE CHROME, added when the owner asked for EVERY string on the site
+  // to be editable. The seven above are page CONTENT; these five are the
+  // furniture around it, and every one of them was still hardcoded in
+  // Gym-frontend/src/lib/site.ts.
+  //
+  // They are SiteItem rather than SiteContent for one reason each, and it is
+  // always the same reason: they are LISTS. `stats` is four numbers, `marquee`
+  // is eight words, `navlinks` is three links, `branches` is two gyms,
+  // `media` is two background slots. SiteContent is one row per (pageKey,
+  // sectionKey) — expressing a list there means inventing
+  // `sectionKey: "stat-1"`, `"stat-2"` …, which makes "insert a stat between
+  // the second and the third" a renumbering exercise and makes the ordering a
+  // string sort. That limitation is the recorded reason models/SiteItem.js
+  // exists at all (docs/todo.md), so it is not re-litigated here.
+  "stats",
+  "marquee",
+  "navlinks",
+  "branches",
+  "media",
 ];
 
 /**
@@ -128,6 +147,152 @@ export const FIELD_SPECS = {
     /** Opaque storage references, same rule as `imageUrl`. */
     beforeImage: { type: "image" },
     afterImage: { type: "image" },
+  },
+
+  // =====================================================================
+  // SITE CHROME
+  //
+  // A NOTE ON THE " | " SEPARATOR used by `branches.hours` and
+  // `branches.openingHours` below, because it looks like a shortcut and is not.
+  //
+  // Those two are lists of TUPLES — ("Mon — Sat", "5:00 AM — 11:00 PM") and
+  // (days, opens, closes) — and `fields` cannot hold a nested object:
+  // `coerceValue` rejects one outright ("must contain strings, not objects"),
+  // deliberately, because a Mixed bag of arbitrary nested objects is how a `$`
+  // key or a prototype name gets in. Loosening that to store two opening-hour
+  // rows would trade a real safety property for a nicer shape.
+  //
+  // So each tuple is ONE string with its columns separated by " | ", carried in
+  // the existing `string[]` type. That keeps the admin editor's existing array
+  // widget working with no client change, and it keeps every value a flat,
+  // key-checked string.
+  //
+  // THE ONE RULE: no column may contain a comma. `coerceValue` accepts a
+  // `string[]` as either a real array or a COMMA-SEPARATED string (that is how a
+  // plain form posts one), so a comma inside an entry would shatter that entry
+  // into pieces the first time somebody saved through a non-JSON client. This is
+  // why `openingHours` joins its weekdays with spaces — "Monday Tuesday …" —
+  // rather than with the commas that would read more naturally.
+  // =====================================================================
+
+  /**
+   * The four animated counters in the home hero. `title` is the label
+   * ("Members Training"); the number lives here.
+   *
+   * `count` is REQUIRED for the same reason `plans.price` is: the hero renders
+   * an animated counter that ticks up to `count`, and a blank one ticks up to
+   * nothing. The published page would show "Members Training" under a zero.
+   *
+   * `value` is the STATIC fallback string the site prints before/instead of the
+   * animation ("1000+"), and `suffix` is what the counter appends once it
+   * arrives ("+", "%", or nothing at all). Both are optional because a plain
+   * whole number needs neither.
+   */
+  stats: {
+    value: { type: "string" },
+    count: { type: "number", required: true },
+    suffix: { type: "string" },
+  },
+
+  /**
+   * The scrolling ribbon on the home page. The word IS the row, so `title`
+   * carries it and there is nothing else to store — the same shape as `faqs`,
+   * where an empty spec means "this list takes no extra fields" and any stray
+   * key is a 400 rather than a silent save.
+   */
+  marquee: {},
+
+  /**
+   * The navbar / footer link list. `title` is the label ("Programs").
+   *
+   * `href` is REQUIRED and lives here rather than in the row's top-level
+   * `ctaHref`, which is where it would more naturally sit. The reason is that
+   * required-ness is only enforceable inside `fields`: the schema's `ctaHref`
+   * defaults to "" and nothing rejects an empty one. A nav link with no
+   * destination is not a nav link — it renders an `<a href="">` that silently
+   * reloads the current page — so it gets the same treatment as a pricing card
+   * with no price.
+   */
+  navlinks: {
+    href: { type: "string", required: true },
+  },
+
+  /**
+   * The two gyms AS THE PUBLIC SITE DESCRIBES THEM. `title` is the full name
+   * ("Mid City Gym — Vasna") and `body` is the blurb.
+   *
+   * NOT models/Branch.js, and the distinction matters. `Branch` is the
+   * operational master: its `name` is the literal string stored on every
+   * Member, Trainer, Transaction and Attendance row, which is why the
+   * controller refuses to rename one. This collection is marketing copy about
+   * the same two floors — the phone number printed on the footer, the opening
+   * hours, the blurb — and editing it must never be able to touch a tenancy
+   * key. Keeping them apart is what makes "fix a typo in the Gotri hours" a
+   * safe thing for staff to do.
+   *
+   * `slug` is REQUIRED: it is "vasna" / "gotri", the stable id the frontend
+   * keys its list on and builds anchors from, and it survives a rename of the
+   * display name. `area`, `phone` and `mapQuery` are required because a branch
+   * card that cannot say where it is, or be phoned, or be found on a map, is
+   * not a branch card.
+   *
+   * `streetAddress`, `postalCode`, `geoLat` and `geoLng` are declared but
+   * SEEDED EMPTY, on purpose. No postal address or map pin for either gym
+   * exists anywhere in this codebase — `Branch.address` is "" for both — and an
+   * invented one is worse than none, because it is wrong in a machine-readable
+   * way that search engines publish and map providers pin. They are declared so
+   * that the day the owner supplies them, it is typing into an existing field
+   * rather than a schema change.
+   */
+  branches: {
+    slug: { type: "string", required: true },
+    area: { type: "string", required: true },
+    phone: { type: "string", required: true },
+    /** "tel:+919687294124" — the dialable form, stored rather than derived. */
+    phoneHref: { type: "string" },
+    /** What gets handed to the maps deep link, e.g. "Mid City Gym Vasna Vadodara". */
+    mapQuery: { type: "string", required: true },
+    /** Display rows: "Mon — Sat | 5:00 AM — 11:00 PM". See the " | " note above. */
+    hours: { type: "string[]" },
+    /**
+     * The same information in the shape schema.org needs, as
+     * "<days> | <opens> | <closes>" with 24-hour HH:MM times and weekdays
+     * joined by spaces.
+     *
+     * Stored ALONGSIDE `hours` rather than parsed out of it: `hours` is display
+     * copy an editor may reword at any time, and a regex over it would start
+     * emitting wrong opening times to Google the first time somebody typed
+     * "Mon-Sat" with a hyphen.
+     */
+    openingHours: { type: "string[]" },
+    streetAddress: { type: "string" },
+    postalCode: { type: "string" },
+    geoLat: { type: "number" },
+    geoLng: { type: "number" },
+  },
+
+  /**
+   * Background media slots — the looping hero video and the interior page
+   * header video.
+   *
+   * `slug` is REQUIRED because this is the one list whose rows are addressed BY
+   * NAME: the frontend asks for the "hero" slot specifically, it does not
+   * render whatever happens to be first. That is normally the argument for
+   * SiteContent (see `social` in config/cmsMenus.js), and it was weighed here —
+   * but a media slot needs TWO urls, a video and its poster, and SiteContent
+   * has exactly one `imageUrl` with a controller whitelist that cannot be
+   * widened without a server change. `fields` already holds typed extra images,
+   * so this is the model that fits. A duplicate slug renders one row, not two,
+   * because the frontend looks the slug up rather than mapping over the list.
+   *
+   * `poster` is what shows before the video buffers, when autoplay is blocked,
+   * and whenever the visitor prefers reduced motion — so a slot with a poster
+   * and no video degrades correctly, which is why neither is required.
+   */
+  media: {
+    slug: { type: "string", required: true },
+    video: { type: "image" },
+    poster: { type: "image" },
   },
 };
 
@@ -300,7 +465,8 @@ const SiteItemSchema = new mongoose.Schema(
   {
     /**
      * Which list this row belongs to: "programs", "plans", "faqs", "trainers",
-     * "classes", "testimonials", "transformations". Lowercased on write so
+     * "classes", "testimonials", "transformations", plus the site chrome lists
+     * "stats", "marquee", "navlinks", "branches", "media". Lowercased on write so
      * "Programs" and "programs" cannot become two lists that each render half
      * the cards.
      */
