@@ -256,20 +256,31 @@ mongoose.set("strictQuery", false);
 mongoose.set("debug", process.env.MONGOOSE_DEBUG === "true");
 
 
-// Menu seeds moved to scripts/seedMenus.js so CI can run them once per release
-// on the serverless target, where boot-time seeding would re-run on every cold
-// start. The long-running process still seeds at boot via seedAllMenus().
-import { seedAllMenus } from "./scripts/seedMenus.js";
-
+/**
+ * NOTHING IS SEEDED AT BOOT. This is deliberate, and it is a change.
+ *
+ * `seedAllMenus()` used to run here for the long-running process. The database
+ * is now seeded, and re-running a seed on every restart is not free even when
+ * it is idempotent: it resurrects menu rows that were deliberately hidden. The
+ * owner hid Blog Master and the template's FAQ screens, and seedMenus.js
+ * creates exactly those — so a restart would have quietly put them back in the
+ * sidebar with no way to tell why they returned.
+ *
+ * Seeding is now an explicit, one-time act:
+ *
+ *     npm run seed:menus          menus
+ *     npm run seed:cms-menus      the /cms/* rows
+ *     npm run seed:site-content   CMS content + chrome lists
+ *     npm run repair:rbac -- --apply
+ *     npm run audit:integrity     verifies the result
+ *
+ * They remain in the repo because a fresh environment has to be buildable from
+ * nothing, and each is idempotent, so re-running one is safe when it IS wanted.
+ * What changed is that nothing runs them for you.
+ */
 try {
   await connectDB();
   databasestatus = "Connected";
-  // Seeding is boot-time work. Serverless containers cold-start constantly, so
-  // running it here re-runs both seeds on every scale-out; the deploy pipeline
-  // runs `npm run seed:menus` once per release instead.
-  if (IS_LONG_RUNNING) {
-    await seedAllMenus();
-  }
 } catch (err) {
   console.error("❌ DB Connection Error =>", err);
   if (err instanceof mongoose.Error.MongooseServerSelectionError) {

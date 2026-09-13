@@ -115,7 +115,12 @@ export const grant = (...on) => ({
 });
 
 /** The super admin's login. The one account the whole model is anchored on. */
-export const SUPER_ADMIN_EMAIL = "websupport@barodaweb.net";
+/**
+ * Moved from websupport@barodaweb.net on the owner's instruction. Leaving the
+ * old address here would make this script fail to find the super admin and
+ * then "repair" a database that is already correct.
+ */
+export const SUPER_ADMIN_EMAIL = "nventra@gmail.com";
 
 /**
  * Menus no branch role may hold, ever.
@@ -212,31 +217,55 @@ export const BRANCH_ACCOUNTS = {
  * on every run rather than trusting the author of the next edit.
  */
 export const TIER_BASELINES = {
+  /**
+   * The branch admin runs one gym: its members, its trainers, its classes, its
+   * cash, and — the owner's explicit requirement — its own staff. Employee is
+   * read+write+edit for that reason, and the server scopes the employee list
+   * by branch so "its own staff" is enforced rather than trusted.
+   *
+   * Deliberately absent: /branch-master (renaming a Branch orphans every
+   * member and transaction row scoped to the old string), /company-details,
+   * and the Country/State/City/email/login-log screens. Those are the owner's
+   * setup, not a branch's, and their presence is what made the two sidebars
+   * look identical.
+   */
   admin: {
     "/members": grant("read", "write", "edit", "delete", "print"),
     "/trainers": grant("read", "write", "edit", "delete"),
+    "/class-sessions": grant("read", "write", "edit", "delete"),
+    "/member-exercise-plan": grant("read", "write", "edit", "delete"),
     "/membership-plans": grant("read"),
     "/cash-flow": grant("read", "write", "edit", "delete", "print"),
     "/expense-categories": grant("read"),
-    "/member-exercise-plan": grant("read", "write", "edit", "delete"),
-    "/branch-master": grant("read"),
-    "/employee": grant("read"),
-    "/company-details": grant("read"),
     "/attendance-overview": grant("read"),
     "/reports": grant("read", "print"),
-    "/class-sessions": grant("read", "write", "edit", "delete"),
+    "/employee": grant("read", "write", "edit"),
+    "/department": grant("read"),
+    // Documentation, not administration. Both tiers keep it.
+    "/guides-gallery": grant("read"),
+    "/manage-guides": grant("read", "write", "edit"),
   },
+  /**
+   * The front desk. Sees the people in front of it and the day's attendance,
+   * and nothing else.
+   *
+   * The owner's words: staff must not see Setup, Accounts or Branch Master.
+   * None appear here. /reports is out too — it is financial, and the front
+   * desk has no reason to read the branch's numbers.
+   *
+   * The one write that matters on these screens - POST
+   * /attendance/:id/mark-allowed, behind checkPermission("/attendance-overview",
+   * "edit") - overrides a system refusal in a member's favour, usually with
+   * money behind it. That stays the branch admin's call and is not granted
+   * here; the super admin can tick it per role if a particular desk needs it.
+   */
   staff: {
-    "/members": grant("read"),
+    "/members": grant("read", "write"),
     "/trainers": grant("read"),
-    "/membership-plans": grant("read"),
-    "/expense-categories": grant("read"),
-    "/member-exercise-plan": grant("read"),
-    "/branch-master": grant("read"),
-    "/company-details": grant("read"),
-    "/attendance-overview": grant("read"),
-    "/reports": grant("read", "print"),
     "/class-sessions": grant("read"),
+    "/membership-plans": grant("read"),
+    "/attendance-overview": grant("read"),
+    "/guides-gallery": grant("read"),
   },
 };
 
@@ -747,17 +776,46 @@ export const repairRbac = async ({ apply = false, verifyOnly = false } = {}) => 
 
     const baseline =
       tierEntry && !tierEntry.conflict ? TIER_BASELINES[tierEntry.tier] : null;
+
+    /**
+     * For the two roles this script OWNS, the baseline is the whole truth:
+     * anything not in it is removed, not just topped up.
+     *
+     * Top-up alone left the two branch sidebars looking identical, which is
+     * what the owner reported. Both roles had accumulated Setup (Country,
+     * State, City, Company Details, the email screens, Login Logs), Accounts
+     * and Branch Master, so the only difference between an admin and a front
+     * desk was which buttons were greyed out — the same menus either way.
+     *
+     * This exactness applies ONLY to the tier roles. Any other role a human
+     * built is still add-only, because reshaping someone's hand-tuned role
+     * without being asked is how a tool stops being safe to re-run.
+     */
+    const pruned = baseline
+      ? keep.filter((row) => {
+          const url = menuById.get(String(row.menuId))?.menuUrl;
+          return url ? Object.prototype.hasOwnProperty.call(baseline, url) : true;
+        })
+      : keep;
+    const prunedUrls = baseline
+      ? keep
+          .filter((row) => !pruned.includes(row))
+          .map((row) => menuById.get(String(row.menuId))?.menuUrl)
+          .filter(Boolean)
+      : [];
+
     const topUp = baseline
-      ? planBaselineTopUp({ rows: keep, baseline, menuByUrl })
+      ? planBaselineTopUp({ rows: pruned, baseline, menuByUrl })
       : { added: [], addedUrls: [], kept: [], missingMenus: [] };
 
-    const dirty = revoked.length || junk.length || topUp.added.length;
+    const dirty = revoked.length || junk.length || topUp.added.length || prunedUrls.length;
 
     line(
       `${dirty ? "❌" : "✅"} "${roleName}" (roleId ${roleId}) — ${doc.roles?.length ?? 0} rows, held by ${heldByBranch ? "a non-super-admin" : "nobody outside the super admin"}${tierEntry ? `, tier '${tierEntry.tier}' (${tierEntry.holders.join(", ")})` : ""}`,
     );
     if (revoked.length) line(`      REVOKE (reserved to super admin): ${revoked.join(", ")}`);
     if (junk.length) line(`      DROP (row points at no menu): ${junk.join(", ")}`);
+    if (prunedUrls.length) line(`      REMOVE (not in the ${tierEntry.tier} baseline): ${prunedUrls.join(", ")}`);
     if (topUp.addedUrls.length) line(`      GRANT (missing from ${tierEntry.tier} baseline): ${topUp.addedUrls.join(", ")}`);
     if (topUp.missingMenus.length)
       line(
@@ -773,7 +831,7 @@ export const repairRbac = async ({ apply = false, verifyOnly = false } = {}) => 
       // anyone already signed in keeps the revoked permission until they log
       // out — a revocation that does not take effect is not a revocation.
       const live = await EmployeeRoles.findById(doc._id);
-      live.roles = [...keep, ...topUp.added];
+      live.roles = [...pruned, ...topUp.added];
       await live.save();
       line(`      ✅ written (EmployeeRoles.updatedAt bumped — live sessions refresh)`);
       changes += 1;
