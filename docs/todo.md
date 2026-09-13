@@ -223,7 +223,38 @@ Carried forward:
 
 ---
 
-## Phase 3 — QR check-in for members and trainers (11–15 h)
+## Phase 3 — QR check-in for members and trainers — DONE except live deploy
+
+Commits: `4f3b31f` (server) · `87baa69` (admin) · `71a944a` (portal)
+
+- [x] Trainer credentials, portal login, `requireTrainer` / `requirePortalUser`, staff set/revoke password
+- [x] `requireMember` **deliberately NOT widened** — a trainer gets 403 on every member-only route (weight, workout, profile, payments). All 10 routes enumerated to prove nothing regressed. Only `scan` accepts either subject
+- [x] Both token types share a signing key, so signature validity proves only "some portal user" — the guards check the `subjectType` claim. A legacy token with no claim defaults to MEMBER, so the deploy signs nobody out
+- [x] `Attendance` gains `subjectType`, `trainerId`, `deniedReason`, `source`; migration run against the live DB
+- [x] **Migration fixed a live landmine**: `memberId_1_date_1` was a *plain* unique index, which treats `null` as a value — the second trainer to check in on any day would have hit `E11000`. Mongoose will not rewrite an existing index when the schema changes; it logs a conflict and keeps the dangerous one
+- [x] 16 `Attendance` call sites audited **by grep, not memory**. Five in Phase 4's staff views were keyed only on branch and date and would have counted trainer shifts as member footfall — silently, with no error. One aggregation collapsed every trainer into a single "unique member" (`$addToSet` on a null `memberId` has one value)
+- [x] `branch.controller` deliberately left unfiltered, with the reason in a comment: it asks whether a branch name is still referenced, and a trainer shift references it identically
+- [x] Printable per-branch QR, generated client-side as a single SVG path. **Round-tripped through an independent decoder** (encode → render → parse back → rasterise → `jsQR`), 24 cases, all byte-identical. Black-on-white is a scanner threshold, not a theme colour
+- [x] Login redirect preserves `branch` and `src` — the whole point of the QR. The full path+query is encoded into one `next` value; left raw, the destination's own `&` parses as a param of `/login` and `src` is lost
+- [x] `next` is allowlisted to five portal routes; 13 open-redirect attempts rejected
+- [x] DENY copy points to reception, states the check-in was *flagged rather than counted*, and says plainly that nothing stopped them coming in. No occurrence of "refused", "denied entry", "verified" or "proof of attendance" anywhere
+- [x] Scan endpoint rate-limited despite being authenticated — it writes on every call. First real consumer of `userRateLimiter`, unused since before this phase
+
+**Bug found and fixed in passing**
+- [x] The login page had **two competing navigators** — the already-signed-in effect and the submit handler both calling `router.replace`. The effect won, sending a first-time member past the forced password change to a screen they could not use; i.e. exactly the member most likely to be standing at the sticker
+
+**Tests**
+- [x] `npm run test:unit` — 49/49 (16 eligibility + 33 Phase 4, still green after the filter changes)
+- [x] Guard/scan smoke 28/28; login smoke 15/15; portal browser harness 38/38 at 390 px; redirect logic 43/43
+- [x] Browser: **GATE PASSED**, 42 checks
+
+Known limits, by design:
+- [ ] Trainers cannot check out — that route is member-only server-side, so a shift closes on the 480-minute sweep. The screen says so rather than hiding a missing button
+- [ ] Denied scans surface only through the export; the live and footfall endpoints exclude them server-side
+
+---
+
+## Phase 3 — original checklist (superseded by the above)
 
 Trainer auth (D4)
 - [ ] `Trainer`: `loginId`, `passwordHash`, portal-access fields
@@ -281,6 +312,21 @@ Reminders
 - [ ] Live smoke green
 
 ---
+
+## Measured findings, not yet scheduled
+
+- [ ] **187 unlabelled form controls across the admin panel.** Measured, not
+  estimated: an audit mirroring the browser gate's rules (which correctly reject
+  `placeholder` as an accessible name) over all 204 JSX files in
+  `Gym-Admin/src`. The gate only sweeps the routes it is given, so it has been
+  green while most of the panel went unaudited. Every screen built in Phases
+  1–4 is clean; the older ones largely are not. This is real work touching
+  screens no phase covers — scope it deliberately rather than folding it into
+  an unrelated change.
+- [ ] `Gym-frontend/src/app/(portal)/attendance/page.tsx` is 1226 lines against
+  a 800-line guideline. It was 1085 before Phase 3, and the new work went into
+  two separate components rather than growing it further. Splitting the calendar
+  and session list out is its own refactor.
 
 ## Deferred (with reasons)
 
