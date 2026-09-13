@@ -512,6 +512,58 @@ can be allowed to edit FAQs without being able to touch pricing.
 - [ ] Optional: migrate existing Blob / local rows into the bucket. Not needed
   for correctness — old references keep resolving
 
+## Everything CMS-editable (owner request, 2026-09-14)
+
+- [x] Six things still lived only in `Gym-frontend/src/lib/site.ts`, so changing
+  a branch phone number or the tagline meant a code change and a deploy. All
+  six now have CMS backing, an admin screen, and frontend rendering:
+  hero **stats** (`/cms/stats`), the **marquee** ribbon (`/cms/marquee`),
+  **nav links** (`/cms/navlinks`), **branch cards** (`/cms/branches`),
+  **background media** (`/cms/media`), and **site identity** (`/cms/site`).
+- [x] Proven, not asserted: building with every `site.ts` constant replaced by
+  a sentinel leaves exactly **one** sentinel in the output — `og:site_name`,
+  documented, because reading it in `generateMetadata` costs a third CMS
+  round-trip per page for a string that is already the fallback.
+- [x] Building with the API unreachable still renders a full 80 KB page. The
+  CMS cannot blank the site.
+- [x] `site.ts` remains the fallback for every key. A row that is missing,
+  inactive or malformed falls back per row; if that empties a list, the whole
+  list falls back.
+- [ ] **Video cannot be uploaded** through `/cms/media` — the field takes a
+  pasted URL. `secureUpload`'s allowlist is images and PDF only, so enabling it
+  needs the allowlist widened, the magic-byte check extended, the 5 MB cap
+  raised and `sharp` kept off for video. The field hint says so in the UI.
+- [ ] Branch street addresses, postal codes and map pins are declared and
+  parsed but empty — nothing was invented, per the owner's recorded decision.
+
+## Integrity audit (`npm run audit:integrity`)
+
+- [x] Sweeps for the class of bug that hid the RBAC failure: references that
+  look right but resolve to nothing. Dangling ObjectIds, routes gated by
+  `checkPermission` with no `MenuMaster` row, `/cms/*` screens and menu rows
+  that do not pair up, branch strings no `BranchMaster` backs, staff who would
+  land a session with zero permissions, and whether an active super admin
+  exists at all. **Currently reports no problems.**
+- [x] `/currency-master` was a routed, gated admin screen with no menu row —
+  super admin bypassed and it worked, everyone else got "Menu not found", and
+  it could never appear in a sidebar. Seeded.
+
+## Known open defect
+
+- [ ] **React #418 (recoverable hydration error) on the marketing home page.**
+  One error, home only; `/programs` and `/contact` are clean — they used to
+  throw it too, so today's work removed two of three. One genuine cause was
+  found and fixed (the hero counters rendered `0` server-side and the real
+  value on a reduced-motion client). The remainder does **not** reproduce on a
+  byte-comparable local production build, in `next dev`, or with a cold cache,
+  and the minified stack contains only React internals. Investigated: reduced
+  motion (the gate does not emulate it), cache skew (fails on both HIT and
+  STALE), time-dependent rendering (no component on the home page reads a date,
+  random or browser global), and `AdSlot` (a Server Component, and no adverts
+  are live). It is recoverable — React regenerates that subtree — so the page
+  works. Next step would be a source-mapped production build to name the
+  component.
+
 ## Measured findings, not yet scheduled
 
 - [x] **187 unlabelled form controls across the admin panel** — now **0**,
