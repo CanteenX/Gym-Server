@@ -6,15 +6,52 @@ reason next to them rather than being silently unticked.
 
 Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
+## Status — 2026-09-13
+
+| Phase | Code | Gate | Live |
+|---|---|---|---|
+| 0 — deployment split | done | passed | **blocked** |
+| 6 — login page | done | passed | blocked |
+| 1 — CMS, adverts, leads | done | passed | blocked |
+| 1b — repeatable CMS content | done | passed | blocked |
+| 2 — SEO + SEO Manager | done | passed | blocked |
+| 4 — attendance, reports, audit | done | passed | blocked |
+| 3 — QR check-in + trainer login | done* | passed | blocked |
+| 5 — booking + reminders | in progress | — | — |
+
+\* three items from the original Phase 3 list did not ship — see the section
+after Phase 3.
+
+**Everything is blocked on one thing, and it is not code.** The Vercel account
+is in a restricted state (`limited: true`); deployments return `BLOCKED` with no
+build logs at all. Check Usage/Billing at vercel.com. Until it clears, every
+commit stays local and Phase 0's live smoke — the one gate nothing else can
+substitute for — cannot run.
+
+Nothing is broken in the meantime: the live site still serves the pre-split
+deployment and is healthy on `/`, `/admin` and `/api`.
+
+Verified locally instead, against the real database: the full stack runs
+(Express + Next + the admin SPA), the browser gate passes at **42 checks**, and
+`npm run test:unit` is **49/49**.
+
 ---
 
 ## Decisions
 
 - [x] Phase 6 brand panel: **A** gradient — chosen by owner 2026-09-13. No open decisions remain.
+- [x] Repeating content model: a `SiteItem` collection keyed by `collectionKey`, decided 2026-09-13 rather than the `program-1…n` sectionKey convention — the latter breaks ordering, validation and the editor UI.
 
 ---
 
-## Phase 0 — Deployment split (4–6 h) — IN PROGRESS
+## Phase 0 — Deployment split — DONE except the live deploy itself
+
+Commits: `8a98492` (server) · `3791263` (admin) · `1bf3141` (frontend)
+
+Both Vercel projects exist and are configured, both CI workflows are written
+and their secrets are set, and the whole split is verified end to end on a
+local production build. The only unfinished item is pushing it live, which the
+account restriction prevents.
 
 **Deviation from the plan, deliberate.** The plan said create a *new* project for
 the front end and give it the domain. `mid-city-gym.vercel.app` is Vercel's
@@ -254,44 +291,43 @@ Known limits, by design:
 
 ---
 
-## Phase 3 — original checklist (superseded by the above)
+### Phase 3 — what the original checklist asked for and did NOT ship
 
-Trainer auth (D4)
-- [ ] `Trainer`: `loginId`, `passwordHash`, portal-access fields
-- [ ] Portal login issues JWT with `subjectType`; `requirePortalUser` accepts member or trainer
-- [ ] Admin: set/revoke trainer password (mirrors member flow)
-- [ ] Key sets stay distinct from staff session
+Everything else on the original Phase 3 list is done and listed above. These
+three are genuinely outstanding, verified by reading the code rather than
+assumed:
 
-Data
-- [ ] `Attendance`: `subjectType`, `trainerId`, `deniedReason`, `source`
-- [ ] Migration: existing rows → `subjectType: "MEMBER"`, `source: "SELF"`
-- [ ] Partial index `{ subjectType, branch, checkInAt }`
-- [ ] Every existing attendance query filters on `subjectType`
-
-Flow
-- [ ] Admin generates printed QR per branch (`?branch=…&src=qr`)
-- [ ] Portal login carries `branch`/`src` through the post-login redirect
-- [ ] `POST /member-portal/attendance/scan`: eligibility → `ALLOW`/`DENY` + reason; attempt recorded either way; `source: "QR"`
-- [ ] DENY screen points to reception (no dead end)
-- [ ] `GET /api/v1/attendance/live?since=` (staff)
-- [ ] Admin arrivals feed: polling with `since` cursor, pauses on hidden tab, denials first, **"mark as allowed"** writes `AuditLog`
-- [ ] `MenuMaster` rows seeded
-
-**Tests (required)**
-- [ ] Eligibility rules: active → ALLOW; expired → DENY(EXPIRED); payment due → DENY(PAYMENT_DUE); inactive → DENY(INACTIVE); trainer → ALLOW
-
-**Gate**
-- [ ] Code review
-- [ ] Browser (390 px, real phone-width): scan link as active member → ALLOWED + entry appears in admin feed; as expired member → DENIED with reception message + denial in feed; as trainer → entry with `subjectType: TRAINER`; logged-out scan preserves branch through login
-- [ ] Admin feed updates without reload within the poll interval
-- [ ] Live smoke green
+- [x] `GET /api/v1/attendance/live?since=` — **implemented**, the cursor
+  narrows to arrivals after a timestamp so the poll payload stays small
+- [x] Admin arrivals polling — **implemented**, 30 s, re-entrancy guarded
+- [ ] **Denials surfaced first in the arrivals feed.** Not built. The live and
+  footfall endpoints exclude denied rows server-side, so today a refusal is
+  visible only through `exports/attendance?includeDenied=true`. D2 says these
+  are the rows staff must act on, so they belong in the feed
+- [ ] **"Mark as allowed" override**, writing an `AuditLog` row. Not built.
+  Without it, a member wrongly denied at the door has no path to being fixed
+  from the panel — reception can take payment, but the refusal stands in the
+  record with nothing pointing at its resolution
+- [ ] Browser-verify the end-to-end door flow with real accounts: active member
+  → ALLOWED and the entry appears in the feed; expired member → DENIED with the
+  reception message; trainer → `subjectType: TRAINER`. The logic is unit-tested
+  (16 eligibility cases) and the portal flow is harness-tested (38 checks), but
+  no real expired member has been walked through it against live data
 
 ---
 
-## Phase 5 — Class booking and email reminders (10–14 h)
+## Phase 5 — Class booking and email reminders (10–14 h) — IN PROGRESS
+
+Server half building now. Two things it must get right rather than approximate:
+the capacity check has to be genuinely atomic (a read-then-write loses the race
+and oversells the last slot), and reminders ship in **dry-run by default** so
+the recipient list can be inspected before anything reaches a member's inbox.
 
 Booking
-- [ ] `ClassSession`, `Booking` models; **atomic** capacity check
+- [ ] `ClassSession`, `Booking` models; **atomic** capacity check, proven under
+      concurrency rather than reasoned about
+- [ ] A `Booking` may belong to a member **or** a lead — a prospect with no
+      account is exactly who books a free trial
 - [ ] Public booking form; admin roster; `MenuMaster` rows seeded
 
 Reminders
