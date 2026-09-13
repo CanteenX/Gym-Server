@@ -308,7 +308,18 @@ export const createPublicBooking = async (req, res) => {
         source: "BOOKING",
         status: "NEW",
         branch: session.branch,
-        message: `Booked: ${session.title} on ${new Date(session.start).toISOString()}`,
+        /**
+         * "Tried to book", not "Booked" — the seat has not been reserved yet
+         * and may not be. The class can be full, in which case this row is all
+         * that remains of the attempt, and it is worth keeping: somebody who
+         * tried to get into a full class is a prospect worth calling back.
+         *
+         * It must not SAY they are booked, though. The front desk reads this
+         * message; telling them a refused caller holds a place sends someone to
+         * a class with no seat. The message is corrected below once the seat is
+         * actually taken.
+         */
+        message: `Tried to book: ${session.title} on ${new Date(session.start).toISOString()}`,
       });
     }
 
@@ -322,6 +333,23 @@ export const createPublicBooking = async (req, res) => {
     if (!result.ok) {
       const status = result.code === "FULL" || result.code === "ALREADY_BOOKED" ? 409 : 404;
       return fail(res, status, result.message, { code: result.code });
+    }
+
+    /**
+     * The seat is taken, so the lead's note can now say so truthfully. Only
+     * rewritten while it still reads as an attempt: once a human has triaged
+     * this lead and written their own note, overwriting it would destroy their
+     * work on every subsequent booking.
+     */
+    if (typeof lead.message === "string" && lead.message.startsWith("Tried to book:")) {
+      await Lead.updateOne(
+        { _id: lead._id },
+        {
+          message: `Booked: ${result.session.title} on ${new Date(result.session.start).toISOString()}`,
+        },
+      ).catch(() => {
+        // The booking is already committed; a stale note must not fail it.
+      });
     }
 
     await notifyNewBooking(result.booking, result.session);
