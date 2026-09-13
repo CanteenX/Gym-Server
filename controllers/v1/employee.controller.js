@@ -681,7 +681,21 @@ export const loginEmployee = async (req, res) => {
       .populate("roleId")
       .exec();
 
-    if (!employee) {
+    /**
+     * A deactivated account must not be able to sign in.
+     *
+     * This check did not exist. `isActive: false` was set by the admin screen,
+     * reported by every listing, and honoured by nothing at login — so
+     * "deactivating" a staff member removed them from view while leaving their
+     * password working. It was found by retiring a second super admin nobody
+     * had documented, then testing the login rather than assuming the flag did
+     * something: it answered "Login successful".
+     *
+     * Deliberately the same 401 and the same message as an unknown address.
+     * Saying "this account is disabled" would confirm the address exists and
+     * tell an attacker which accounts are worth pursuing elsewhere.
+     */
+    if (!employee || employee.isActive === false) {
       return res.status(401).json({
         isOk: false,
         message: "Invalid credentials",
