@@ -24,6 +24,42 @@ stack (Express + Next + the admin SPA), not just built.
 
 `npm run test:unit` — **170/170**. Browser gate — **42 checks**, green.
 
+## Production gate result — 2026-09-13, FAILING
+
+The switch-over is live and healthy (`/`, `/admin`, `/api`, `/sitemap.xml`,
+`/robots.txt` all 200; staff login 1531 ms; `sessionId` httpOnly set). But the
+browser gate run against production **fails**, for two separate reasons. Re-run
+it before trusting anything below:
+
+```bash
+cd Gym-Admin
+SA_EMAIL=websupport@barodaweb.net SA_PASS=123456 \
+  npm run e2e -- --base https://mid-city-gym.vercel.app
+```
+
+**1. Unnamed form controls on members / trainers / membership-plans / employee /
+cash-flow / profile — almost certainly a STALE BUNDLE, not a regression.**
+These were fixed in commit `bd21b23` (163 → 0) but the deploy carrying it was
+still in flight when the gate ran; the previous run shows `cancelled` because a
+newer push superseded it. Confirm by re-running the gate once the latest
+`Gym-frontend` deploy is green. If they persist, the fix did not reach the
+bundle and that is the thing to debug.
+
+**2. React error #418 on `/contact` and `/programs` — REAL, and live now.**
+Two `pageerror`s per page. #418 is a hydration text mismatch: the server-rendered
+HTML and the first client render disagree. It does not blank the page, which is
+why it went unnoticed, but React discards the server HTML for that subtree and
+re-renders on the client — losing the SEO benefit those prerendered pages exist
+for, on exactly the two pages the CMS feeds.
+
+Most likely cause: something rendering non-deterministically between server and
+client in the CMS-driven sections — a date/time formatted with the local
+timezone, or the class timetable's derived day/time axes. Start at
+`src/lib/site-lists.ts` (`buildScheduleGrid`) and the `class-picker` /
+`class-booking` components added in `4f2543a`. Reproduce with
+`npm run build && npm start` locally, then open `/programs` with the console
+open — the non-minified dev build names the mismatching text.
+
 ## Do these first
 
 1. **Apply the branch-role seed.** Written, tested, dry-run verified, NOT applied:
