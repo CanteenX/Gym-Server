@@ -287,20 +287,57 @@ Neither link has been changed yet — unlinking a project is an account-level
 action and is the owner's call. Until then, expect stray builds on pushes to
 Gym-Server and Gym-Admin.
 
-### Why deploys never completed
+### Why deploys never completed — the actual reason
 
-Every deploy run in `Gym-frontend` history died at the same step. `vercel
-deploy` blocks until the build finishes; the upload took 4 seconds and the CLI
-then sat in `Building…` until the 25-minute job timeout killed it. That
-happened even for a 1.6 MB static directory with no framework and nothing to
-compile, which is what rules out any "Next build" explanation for the hang
-itself. An abandoned deployment from one of those runs was checked afterwards
-and found alive and serving, so the builds did finish — the job was simply
-killed before it could alias, which is why production kept serving an old
-release and why `/sitemap.xml` and `/robots.txt` stayed 404 long after the fix
-was pushed.
+Three explanations were tried and discarded before the right one. Recording all
+of them, because each looked convincing and two of them shaped real decisions.
 
-The workflow now creates the deployment with `--no-wait`, polls `readyState`
-over the REST API on a 45-minute budget, and aliases only after `READY`. A
-stuck queue now degrades to "no new release" instead of "the site is down".
+1. **"Next builds hang on this account."** Wrong. The static ship was built on
+   this premise, surrendering ISR, on-demand revalidation and `/_next/image`.
+   A 1.6 MB static directory with no framework and nothing to compile hung
+   identically, so there was never a Next build involved.
+2. **"Builds sit in a slow queue."** Wrong. The wait budget was raised to 45
+   minutes on this theory. Deployments were refused within one second and never
+   moved; the long budget only delayed the refusal.
+3. **"`--archive=tgz` is rejected."** Wrong, despite a near-perfect timing
+   correlation: the flag was added at 13:16 UTC and the first refusal was at
+   13:18 UTC. Removing it changed nothing.
+
+The deployment record said it plainly the moment anyone asked for the whole
+object instead of two fields:
+
+```
+readyStateReason: "The deployment was blocked because the commit author
+                   doesn't have permission to create deployments for this project."
+buildSkipped:     true
+```
+
+The CLI reads the commit from the checkout's `.git` and attaches it
+(`githubDeployment: "1"`). Vercel checks whether that author may deploy the
+project, decides not, and refuses **before building**. Hence `BLOCKED` with no
+`errorCode`, no `errorMessage`, no `errorStep` and no build log — there was no
+build to log. Every "no output" symptom follows from that one fact.
+
+**The fix in CI:** deploy from a copy of the tree with no `.git` above it, so no
+commit metadata is attached and there is no author to reject. First green
+deploy took **46 seconds**, start to alias.
+
+**The better fix, on the account:** add the commit author's address to the
+Vercel account, or grant that GitHub identity deploy rights on the project.
+Then the copy step in `deploy-vercel.yml` can be deleted and the dashboard gets
+its commit links back.
+
+**The lesson worth keeping:** `BLOCKED` is not a build failure, and reading two
+fields off an API is not the same as reading the record. Three hypotheses fit
+the evidence-so-far and all three were wrong; the object had the answer in it
+the entire time.
+
+### Why the pipeline used to abandon builds
+
+`vercel deploy` blocks until the build finishes. With deployments refused
+instantly but the CLI still waiting, every run sat until the job timeout killed
+it. The workflow now creates with `--no-wait`, polls `readyState` over the REST
+API on a 15-minute budget, treats `BLOCKED` as terminal, and aliases only after
+`READY` — so a genuine problem fails in seconds and a slow build never takes the
+site down.
 
