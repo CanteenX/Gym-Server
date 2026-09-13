@@ -248,6 +248,35 @@ export const exportAttendance = async (req, res) => {
     if (from > to) return fail(res, 400, "fromDate must be before toDate");
 
     const filter = { date: { $gte: from, $lte: to } };
+
+    /**
+     * SUBJECT SCOPING (Phase 3 / plan.md D3). Trainer shifts live in the same
+     * collection behind `subjectType`, so without this line a CSV of "member
+     * check-ins" quietly contains trainer rows — with an empty Member column,
+     * because the populate below only resolves memberId. Anyone totalling that
+     * file gets the wrong number.
+     *
+     * MEMBER by default, which is what this export has always meant.
+     * ?subjectType=TRAINER or =ALL has to be asked for by name; anything
+     * unrecognised falls back to MEMBER rather than to everything.
+     */
+    const askedSubject = String(req.query.subjectType || "")
+      .trim()
+      .toUpperCase();
+    if (askedSubject === "TRAINER") filter.subjectType = "TRAINER";
+    else if (askedSubject !== "ALL") filter.subjectType = "MEMBER";
+
+    /**
+     * Refused scans are rows, not visits. A CSV headed "check-ins" that counted
+     * a lapsed member's five refusals as five visits would be worse than one
+     * that omits them, because the file leaves the building and gets forwarded.
+     * `deniedReason: null` matches pre-Phase-3 rows too — Mongo treats a
+     * missing field as null on an equality match — so no backfill is needed.
+     */
+    if (String(req.query.includeDenied || "") !== "true") {
+      filter.deniedReason = null;
+    }
+
     const requested = resolveBranchFilter(req, req.query.branch);
     if (requested) filter.branch = requested;
     // LAST.
@@ -257,21 +286,32 @@ export const exportAttendance = async (req, res) => {
       label: "attendance",
       filename: `attendance-checkins-${stamp()}.csv`,
       query: Attendance.find(filter)
-        .select("memberId branch date checkInAt checkOutAt autoClosed")
+        .select(
+          "subjectType memberId trainerId branch date checkInAt checkOutAt autoClosed source deniedReason",
+        )
         .populate("memberId", "fullName mobileNumber")
+        .populate("trainerId", "fullName mobileNumber")
         .sort({ date: -1, checkInAt: -1 }),
       columns: [
         { key: "date", label: "Date" },
         { key: "branch", label: "Branch" },
+        // Present even on a MEMBER-only export, so a reader of the file can see
+        // WHICH population it covers instead of assuming.
+        {
+          key: "subjectType",
+          label: "Type",
+          get: (d) => d.subjectType || "MEMBER",
+        },
         {
           key: "member",
           label: "Member",
-          get: (d) => d.memberId?.fullName || "",
+          get: (d) => d.memberId?.fullName || d.trainerId?.fullName || "",
         },
         {
           key: "mobile",
           label: "Mobile",
-          get: (d) => d.memberId?.mobileNumber || "",
+          get: (d) =>
+            d.memberId?.mobileNumber || d.trainerId?.mobileNumber || "",
         },
         { key: "checkInAt", label: "Checked In At" },
         { key: "checkOutAt", label: "Checked Out At" },
@@ -284,6 +324,12 @@ export const exportAttendance = async (req, res) => {
           key: "autoClosed",
           label: "Auto Closed",
           get: (d) => (d.autoClosed ? "Yes" : "No"),
+        },
+        { key: "source", label: "Source", get: (d) => d.source || "SELF" },
+        {
+          key: "deniedReason",
+          label: "Denied Reason",
+          get: (d) => d.deniedReason || "",
         },
       ],
     });

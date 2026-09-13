@@ -6,9 +6,17 @@ import {
   listAttendance,
   updateSessionLength,
 } from "../../controllers/v1/attendance.controller.js";
-import { requireMember } from "../../controllers/v1/memberAuth.controller.js";
+import {
+  requireMember,
+  requirePortalUser,
+} from "../../controllers/v1/memberAuth.controller.js";
+import {
+  scanCheckIn,
+  getBranchQr,
+} from "../../controllers/v1/attendanceScan.controller.js";
 import { authMiddleware } from "../../middlewares/authMiddleware.js";
 import { checkPermission } from "../../middlewares/checkPermission.js";
+import { userRateLimiter } from "../../middlewares/rateLimiter.js";
 import {
   getFootfall,
   getInGymNow,
@@ -46,6 +54,56 @@ router.get("/member-portal/attendance", requireMember, listAttendance);
 // Lives here rather than with the auth profile routes because the only thing
 // this setting affects is the attendance auto-close.
 router.put("/member-portal/session-length", requireMember, updateSessionLength);
+
+/**
+ * @swagger
+ * /member-portal/attendance/scan:
+ *   post:
+ *     summary: QR check-in with an explicit ALLOW / DENY verdict
+ *     tags: [Attendance - Portal]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               branch: { type: string, description: The branch the QR carried }
+ *               source: { type: string, enum: [QR, SELF], default: QR }
+ *     responses:
+ *       200:
+ *         description: >
+ *           { verdict, reason, branch, attendanceId }. The attempt is recorded
+ *           either way. A DENY informs the member and flags the front desk; it
+ *           is NOT a door and nothing here is proof of presence.
+ *
+ * ============================================================================
+ * THE ONE ROUTE IN THIS FILE THAT A TRAINER MAY REACH.
+ * ============================================================================
+ * requirePortalUser, not requireMember, because a trainer's shift is an
+ * Attendance row too (plan.md D3/D4). Nothing else on the member-portal side
+ * was widened: the routes above stay requireMember, so a trainer's token — a
+ * validly signed token, since both are signed with MEMBER_JWT_SECRET_KEY —
+ * still cannot read a member's history, weight log, workout plan or profile.
+ * The separation is the subjectType CLAIM, checked inside each guard; the
+ * signature alone proves only "some portal user".
+ */
+/**
+ * Rate limited even though it is authenticated. The endpoint WRITES on every
+ * call - an allowed scan opens a session, a denied one records the refusal -
+ * so a client looping it is writing rows, not just reading. keyGenerator is
+ * IP:userId, so one abusive account cannot spend another member's budget, and
+ * 200/15min is far above anything a person walking through a door produces.
+ *
+ * userRateLimiter has existed unused since before this phase; this is its
+ * first real consumer.
+ */
+router.post(
+  "/member-portal/attendance/scan",
+  requirePortalUser,
+  userRateLimiter,
+  scanCheckIn,
+);
 
 // ============ STAFF PANEL (session + permission) ============
 
@@ -148,5 +206,35 @@ router.get("/attendance/live", ...staffRead, getInGymNow);
  *           phone call, not evidence.
  */
 router.get("/attendance/not-checked-in", ...staffRead, getNotCheckedIn);
+
+/**
+ * @swagger
+ * /attendance/qr/{branch}:
+ *   get:
+ *     summary: The printable QR payload for one branch
+ *     tags: [Attendance - Staff]
+ *     parameters:
+ *       - in: path
+ *         name: branch
+ *         required: true
+ *         schema: { type: string }
+ *         description: A physical branch name from the Branch master.
+ *     responses:
+ *       200:
+ *         description: >
+ *           { branch, url, path, configured }. The deep link to encode on the
+ *           sticker; the admin panel renders the image. `configured` is false
+ *           when PUBLIC_SITE_ORIGIN is unset, in which case the link is
+ *           relative and must not be printed.
+ *       403:
+ *         description: A branch admin asked for another branch's QR
+ *       404:
+ *         description: No such branch
+ *
+ * Behind the SAME /attendance-overview permission as the views above: printing
+ * the sticker is part of running the attendance feature, and the payload
+ * carries no member data at all.
+ */
+router.get("/attendance/qr/:branch", ...staffRead, getBranchQr);
 
 export default router;

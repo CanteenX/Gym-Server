@@ -4,11 +4,19 @@ import { authRateLimiter } from "../../middlewares/rateLimiter.js";
 import {
   memberLogin,
   getMemberProfile,
+  getPortalProfile,
   changeMemberPassword,
   setMemberPassword,
   revokeMemberPortalAccess,
   requireMember,
+  requireTrainer,
+  requirePortalUser,
 } from "../../controllers/v1/memberAuth.controller.js";
+import {
+  setTrainerPassword,
+  revokeTrainerPortalAccess,
+  changeTrainerPassword,
+} from "../../controllers/v1/trainerAuth.controller.js";
 
 const router = express.Router();
 
@@ -26,11 +34,33 @@ const router = express.Router();
 router.post("/member-auth/login", authRateLimiter, memberLogin);
 
 // ===== Authenticated member =====
+//
+// STILL MEMBER-ONLY, AND DELIBERATELY SO. Phase 3 added trainers to the portal
+// but did not widen these: /member-auth/me returns a MEMBER profile (plan,
+// dates, fee, balance) and the password change writes to Member. A trainer's
+// token is validly signed with the same key, so the only thing keeping it out
+// is requireMember's subjectType check. Trainers get the two routes below
+// instead.
 router.get("/member-auth/me", requireMember, getMemberProfile);
 router.post(
   "/member-auth/change-password",
   requireMember,
   changeMemberPassword,
+);
+
+// ===== Authenticated portal user (member OR trainer) =====
+//
+// The portal calls this on boot to restore whoever is signed in. It has to
+// accept both or a trainer refreshing the page would be signed out by a 403
+// from /member-auth/me. It returns only the caller's OWN record, chosen by the
+// subjectType claim — there is no id in the path to tamper with.
+router.get("/portal-auth/me", requirePortalUser, getPortalProfile);
+
+// ===== Authenticated trainer =====
+router.post(
+  "/portal-auth/trainer/change-password",
+  requireTrainer,
+  changeTrainerPassword,
 );
 
 /**
@@ -55,6 +85,29 @@ router.delete(
   "/members/:id/portal-access",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
   revokeMemberPortalAccess,
+);
+
+/**
+ * ===== Staff-side TRAINER portal access management (plan.md D4) =====
+ *
+ * The exact mirror of the two routes above, one noun along, and mounted here
+ * for the same stated reason: every credential-touching handler lives in one
+ * file. They are NOT in trainers.routes.js despite acting on a trainer.
+ *
+ * A staff session is required on both, no exceptions — these WRITE a password,
+ * so an unguarded one is a full account takeover for anyone who can guess an
+ * _id. That is not hypothetical: it is exactly what the member equivalents
+ * shipped with before it was found.
+ */
+router.put(
+  "/trainers/:id/set-password",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  setTrainerPassword,
+);
+router.delete(
+  "/trainers/:id/portal-access",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  revokeTrainerPortalAccess,
 );
 
 export default router;

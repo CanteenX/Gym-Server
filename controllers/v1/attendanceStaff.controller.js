@@ -33,7 +33,62 @@ import {
  * LAST, so a branch admin's own branch overrides whatever the client asked
  * for. See middlewares/branchScope.js — and note that it reads
  * req.session.user, never req.user, which carries no branch at all.
+ *
+ * ============================================================================
+ * SUBJECT SCOPING: EVERY QUERY HERE CARRIES subjectType. THIS IS THE FILE THE
+ * PHASE 3 WARNING WAS WRITTEN ABOUT.
+ * ============================================================================
+ * Phase 3 put trainer shifts in the same collection behind a discriminator
+ * (plan.md D3). Unlike the member-portal queries, NOTHING here is keyed on a
+ * memberId — these ask about a branch and a date range, which a trainer's row
+ * answers just as well as a member's. So a query that omits subjectType counts
+ * trainer shifts as member footfall, and it does so silently: no error, no
+ * warning, nothing on screen that looks wrong. The owner simply gets numbers
+ * that are too big, and nobody finds out from the software.
+ *
+ * `subjectFilter(req)` below is the single place that decides it. Default
+ * MEMBER — the pre-Phase-3 meaning of every one of these screens, so an admin
+ * page that was not updated keeps showing exactly what it showed yesterday.
+ * `?subjectType=TRAINER` switches, `?subjectType=ALL` deliberately combines and
+ * has to be asked for by name.
+ *
+ * DENIED ATTEMPTS ARE ALSO EXCLUDED from the counting queries. A refused scan
+ * is a real row (it has to be — the front desk needs to see it), but it is not
+ * a visit, and a lapsed member tapping the sticker five times must not read as
+ * five arrivals.
  */
+
+/**
+ * The subject-type fragment for every query in this file. Spread like
+ * scopeFilter, and for the same reason: one place to be right.
+ *
+ * Returns `{}` only for an explicit `?subjectType=ALL`, never by accident —
+ * an unrecognised value falls back to MEMBER rather than to "everything",
+ * because the failure mode of guessing wrong must be a number that is too
+ * small and obviously so, not one that is too big and plausible.
+ */
+const subjectFilter = (req) => {
+  const asked = String(req.query?.subjectType || "").trim().toUpperCase();
+  if (asked === "ALL") return {};
+  if (asked === "TRAINER") return { subjectType: "TRAINER" };
+  return { subjectType: "MEMBER" };
+};
+
+/** How the response labels what it just counted, so a screen cannot guess. */
+const subjectLabel = (req) => {
+  const asked = String(req.query?.subjectType || "").trim().toUpperCase();
+  if (asked === "ALL") return "ALL";
+  if (asked === "TRAINER") return "TRAINER";
+  return "MEMBER";
+};
+
+/**
+ * Refused scans are rows but not visits. Excluded from every count below.
+ * `deniedReason: null` also matches rows written before the field existed —
+ * Mongo treats a missing field as null for an equality match — so this needs
+ * no backfill to be correct.
+ */
+const NOT_DENIED = { deniedReason: null };
 
 /** Midnight local — Attendance.date is stored normalised the same way. */
 const startOfDay = (value) => {
@@ -100,6 +155,10 @@ export const getFootfall = async (req, res) => {
 
     const match = {
       date: { $gte: from, $lte: to },
+      ...NOT_DENIED,
+      // MEMBER unless the caller explicitly asked otherwise. Without this,
+      // trainer shifts are counted as member arrivals — see the file header.
+      ...subjectFilter(req),
       ...(requested ? { branch: requested } : {}),
       // LAST, and therefore authoritative over everything above it.
       ...scopeFilter(req),
@@ -114,7 +173,11 @@ export const getFootfall = async (req, res) => {
           // A member can only hold one row per day (the unique index on
           // { memberId, date }), so this is the same number today — kept
           // explicit so the figure survives any future change to that rule.
-          uniqueMembers: { $addToSet: "$memberId" },
+          // Whichever id this row actually carries. A trainer row has
+          // memberId: null, and counting nulls into a set would collapse every
+          // trainer on a day into one "unique member" — a number that is wrong
+          // and looks reasonable, which is the worst combination.
+          uniqueMembers: { $addToSet: { $ifNull: ["$memberId", "$trainerId"] } },
           autoClosed: { $sum: { $cond: ["$autoClosed", 1, 0] } },
           totalMinutes: {
             $sum: {
@@ -163,6 +226,9 @@ export const getFootfall = async (req, res) => {
         days,
         byBranch: Object.values(byBranch),
         totalCheckIns: days.reduce((s, d) => s + d.checkIns, 0),
+        // Which population was counted. Travels with the numbers so a chart
+        // cannot label trainer shifts as member footfall.
+        subjectType: subjectLabel(req),
         // Repeated in the payload so a screen cannot present this as a
         // turnstile count by accident.
         basis:
@@ -195,6 +261,11 @@ export const getInGymNow = async (req, res) => {
 
     const requested = resolveBranchFilter(req, req.query.branch);
     const branchMatch = {
+      // Applied to BOTH queries below, which is why it lives up here: the open
+      // sessions and the stale count must describe the same population or the
+      // panel shows "3 people inside" beside "5 stale" for five different rows.
+      ...NOT_DENIED,
+      ...subjectFilter(req),
       ...(requested ? { branch: requested } : {}),
       ...scopeFilter(req),
     };
@@ -213,8 +284,11 @@ export const getInGymNow = async (req, res) => {
 
     const [sessions, staleOpenSessions] = await Promise.all([
       Attendance.find(openFilter)
-        .select("memberId branch checkInAt date")
+        .select("subjectType memberId trainerId branch checkInAt date")
         .populate("memberId", "fullName mobileNumber photo branch")
+        // Populated too, or a trainer shift shows up on the floor as a blank
+        // row with no name on it once ?subjectType is TRAINER or ALL.
+        .populate("trainerId", "fullName mobileNumber branch")
         .sort({ checkInAt: -1 })
         .limit(200)
         .lean(),
@@ -233,18 +307,31 @@ export const getInGymNow = async (req, res) => {
 
     const data = sessions.map((s) => ({
       _id: s._id,
+      subjectType: s.subjectType || "MEMBER",
       branch: s.branch,
       checkInAt: s.checkInAt,
       minutesSoFar: Math.max(
         0,
         Math.round((now - new Date(s.checkInAt)) / 60000),
       ),
+      // `member` keeps its exact former shape and meaning — null on a trainer
+      // row — so the existing admin feed renders unchanged. `trainer` is the
+      // new, separate key rather than a person squeezed into `member`, because
+      // a screen that showed a trainer under the member column would be lying
+      // in the same way the unfiltered footfall count did.
       member: s.memberId
         ? {
             _id: s.memberId._id,
             fullName: s.memberId.fullName,
             mobileNumber: s.memberId.mobileNumber,
             photo: s.memberId.photo,
+          }
+        : null,
+      trainer: s.trainerId
+        ? {
+            _id: s.trainerId._id,
+            fullName: s.trainerId.fullName,
+            mobileNumber: s.trainerId.mobileNumber,
           }
         : null,
     }));
@@ -258,6 +345,7 @@ export const getInGymNow = async (req, res) => {
         inGymNow: data.length,
         sessions: data,
         staleOpenSessions,
+        subjectType: subjectLabel(req),
         basis:
           "Open self-reported sessions. A member can log a session without being present.",
       },
@@ -330,6 +418,14 @@ export const getNotCheckedIn = async (req, res) => {
 
     // Everyone with at least one logged session inside the window.
     const recentIds = await Attendance.distinct("memberId", {
+      // This one is already keyed on a set of member _ids, so a trainer row
+      // (memberId: null) could not match. Filtered anyway — the house rule for
+      // this collection has no silent exceptions, and it lets the query use the
+      // subjectType index. A denied scan must NOT count as having checked in:
+      // the member was turned away, which is precisely when somebody should
+      // call them.
+      subjectType: "MEMBER",
+      ...NOT_DENIED,
       memberId: { $in: ids },
       date: { $gte: cutoff },
     });
@@ -340,7 +436,13 @@ export const getNotCheckedIn = async (req, res) => {
     // Their most recent check-in ever, so the list can be ordered by how long
     // it has been. Members with no row at all keep lastCheckInAt: null.
     const lastSeen = await Attendance.aggregate([
-      { $match: { memberId: { $in: lapsed.map((m) => m._id) } } },
+      {
+        $match: {
+          subjectType: "MEMBER",
+          ...NOT_DENIED,
+          memberId: { $in: lapsed.map((m) => m._id) },
+        },
+      },
       { $group: { _id: "$memberId", lastCheckInAt: { $max: "$checkInAt" } } },
     ]);
     const lastSeenBy = new Map(

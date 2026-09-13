@@ -1,23 +1,118 @@
 import mongoose from "mongoose";
 
 /**
- * One gym visit by one member.
+ * One gym visit by one member — or, since Phase 3, one shift by one trainer.
  *
  * WHY A ROW PER SESSION RATHER THAN A COUNTER ON Member:
  * a counter answers "how many times has he trained" and nothing else. The
  * portal asks harder questions — streaks, this month's minutes, "did I train on
  * the 5th" — and every one of those needs the individual visits kept.
  *
- * Rows are OWNED BY THE MEMBER: memberId always comes from the verified JWT,
- * never from the request, so nobody can check in as somebody else.
+ * Rows are OWNED BY THE SUBJECT: memberId/trainerId always come from the
+ * verified JWT, never from the request, so nobody can check in as somebody else.
+ *
+ * ============================================================================
+ * ONE COLLECTION, TWO SUBJECTS — READ THIS BEFORE WRITING ANY QUERY HERE.
+ * ============================================================================
+ * plan.md D3 chose a discriminator (`subjectType`) over a second
+ * `TrainerAttendance` collection, because "who is in the gym now" and per-day
+ * footfall are then one query instead of two plus a merge, and the auto-close
+ * behaviour is written once instead of twice.
+ *
+ * The price of that decision, accepted knowingly and payable HERE:
+ *
+ *     EVERY QUERY AGAINST THIS COLLECTION MUST FILTER ON subjectType.
+ *
+ * A query that forgets it does not throw, does not warn, and does not look
+ * wrong on screen — it just quietly adds trainer shifts to member footfall and
+ * the owner's numbers become wrong with no symptom. The only queries that may
+ * legitimately span both are the ones asking about the COLLECTION rather than
+ * about people (branch.controller.js's "is this branch still referenced?"),
+ * and those say so in a comment.
  */
 const AttendanceSchema = new mongoose.Schema(
   {
+    /**
+     * Which kind of person this row is about. The discriminator from D3.
+     *
+     * Defaulted rather than left undefined so a row written by code that has
+     * not been updated still lands in the MEMBER bucket — the pre-Phase-3
+     * meaning of every existing row — instead of in neither bucket, where a
+     * `subjectType: "MEMBER"` filter would silently drop it from footfall.
+     * scripts/migrateAttendanceSubjectType.js backfills the historical rows for
+     * the same reason.
+     */
+    subjectType: {
+      type: String,
+      enum: ["MEMBER", "TRAINER"],
+      required: true,
+      default: "MEMBER",
+      // A standalone index as well as the compound one at the bottom of this
+      // file, which looks redundant and is not: the compound is PARTIAL on
+      // `subjectType: { $exists: true }`, so it cannot answer
+      // `{ subjectType: { $exists: false } }` — which is exactly the question
+      // the migration asks to find rows it has not backfilled yet. This plain
+      // index indexes a missing field as null and can.
+      index: true,
+    },
+
+    /**
+     * Null ONLY on a trainer row. Required for a member row, and enforced by a
+     * function rather than `required: true` because the field genuinely has two
+     * modes now — a flat `true` would reject every trainer shift.
+     */
     memberId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Member",
-      required: true,
+      default: null,
+      required() {
+        return this.subjectType !== "TRAINER";
+      },
       index: true,
+    },
+
+    /** Null on a member row; the mirror of memberId for a trainer shift. */
+    trainerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Trainer",
+      default: null,
+      required() {
+        return this.subjectType === "TRAINER";
+      },
+    },
+
+    /**
+     * Why a scan was refused, or null when it was allowed.
+     *
+     * A DENIED ATTEMPT IS STILL A ROW. Nobody stands at the door (plan.md D2),
+     * so a denial cannot stop anyone walking in — all the system can do is tell
+     * the member and leave a trace staff can act on. An absent row would be
+     * indistinguishable from "never scanned", which is exactly the information
+     * the front desk needs.
+     *
+     * Because a denial IS a row, the counting views have to exclude it or a
+     * lapsed member tapping the sticker five times becomes five visits. Denied
+     * rows are written with checkOutAt === checkInAt so they can never be
+     * mistaken for an open session either.
+     */
+    deniedReason: {
+      type: String,
+      default: null,
+    },
+
+    /**
+     * How the session was started: the portal button, or the branch QR.
+     *
+     * Both paths write the same shape of row on purpose (plan.md D2b) — if the
+     * QR wrote a different shape the two sets of footfall numbers could not be
+     * compared. This field is the only thing that separates them, which is what
+     * makes "is anyone actually using the stickers?" answerable.
+     */
+    source: {
+      type: String,
+      enum: ["SELF", "QR"],
+      required: true,
+      default: "SELF",
     },
 
     checkInAt: {
@@ -87,8 +182,39 @@ const AttendanceSchema = new mongoose.Schema(
  * creating a duplicate. The index guarantees that even if a future caller
  * forgets to check first — and it's what makes the streak maths trustworthy,
  * since a day can never contribute two entries.
+ *
+ * ============================================================================
+ * NOW PARTIAL, AND IT HAS TO BE. RUN THE MIGRATION BEFORE ANY TRAINER SCANS.
+ * ============================================================================
+ * Trainer rows carry `memberId: null`. A plain unique index treats null as a
+ * value, so the SECOND trainer to check in on any given day would collide with
+ * the first:
+ *     E11000 duplicate key ... index: memberId_1_date_1 dup key: { memberId: null }
+ * — the exact trap the receipt-number index fell into (scripts/fixReceiptIndex.js).
+ * The partial filter restricts uniqueness to rows that actually name a member.
+ *
+ * Mongoose will NOT rewrite an index that already exists in the database just
+ * because the options here changed; it logs an IndexOptionsConflict and carries
+ * on with the old, dangerous one. scripts/migrateAttendanceSubjectType.js drops
+ * and recreates it. Until that has run, trainer check-in is broken for everyone
+ * but the first trainer of the day.
  */
-AttendanceSchema.index({ memberId: 1, date: 1 }, { unique: true });
+AttendanceSchema.index(
+  { memberId: 1, date: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { memberId: { $type: "objectId" } },
+  },
+);
+
+/** The same guarantee for a trainer's shift, on the mirror field. */
+AttendanceSchema.index(
+  { trainerId: 1, date: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { trainerId: { $type: "objectId" } },
+  },
+);
 
 /** The recent-activity list reads newest-first for one member. */
 AttendanceSchema.index({ memberId: 1, checkInAt: -1 });
@@ -112,5 +238,24 @@ AttendanceSchema.index({ branch: 1, date: 1 });
  * or time are considered.
  */
 AttendanceSchema.index({ checkOutAt: 1, branch: 1, checkInAt: -1 });
+
+/**
+ * The Phase 3 index: every staff-facing question is now asked per subject type.
+ *
+ * subjectType leads because it is the equality match that every one of those
+ * queries carries (see the file header), branch is the second equality, and
+ * checkInAt is the range — which is the order a compound index needs to be
+ * usable from left to right.
+ *
+ * PARTIAL on `subjectType: { $exists: true }` so it indexes only rows that have
+ * been migrated. A pre-Phase-3 row without the field cannot satisfy a
+ * `subjectType: "MEMBER"` query anyway, so indexing it would cost space and buy
+ * nothing; and keeping the index partial makes "how many rows still need the
+ * backfill?" cheap to answer. Once the migration has run it covers everything.
+ */
+AttendanceSchema.index(
+  { subjectType: 1, branch: 1, checkInAt: -1 },
+  { partialFilterExpression: { subjectType: { $exists: true } } },
+);
 
 export default mongoose.model("Attendance", AttendanceSchema);

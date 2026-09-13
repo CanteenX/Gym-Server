@@ -7,6 +7,24 @@ import Member from "../../models/Member.js";
  * Every handler scopes its query by req.member.id, which requireMember derives
  * from the verified token. No handler accepts a memberId from the client — that
  * would let any logged-in member check in, or read the history of, another.
+ *
+ * ============================================================================
+ * EVERY QUERY BELOW ALSO CARRIES subjectType: "MEMBER". IT IS NOT DECORATION.
+ * ============================================================================
+ * Phase 3 put trainer shifts in the same collection behind a discriminator
+ * (plan.md D3). These particular queries are additionally keyed on a memberId
+ * that came from a member's own token, so a trainer row — memberId: null —
+ * could not match one today even without the filter. It is written anyway,
+ * everywhere, for two reasons:
+ *
+ *   1. It is the house rule for this collection, and a rule with exceptions
+ *      scattered through it is a rule nobody applies. The one query that must
+ *      NOT filter says so explicitly (branch.controller.js).
+ *   2. It lets the { subjectType, branch, checkInAt } index serve these too.
+ *
+ * The check-in WRITE is the one that genuinely needs it: an insert with no
+ * subjectType would rely on the schema default and, if that default were ever
+ * removed, land in neither bucket and vanish from footfall silently.
  */
 
 /** Midnight local, so a visit belongs to a day rather than an instant. */
@@ -49,7 +67,11 @@ const sessionLengthOf = (member) => member?.sessionMinutes || 90;
  * server free of a scheduler it would otherwise need solely for this.
  */
 const autoCloseStale = async (memberId, minutes) => {
-  const open = await Attendance.find({ memberId, checkOutAt: null });
+  const open = await Attendance.find({
+    subjectType: "MEMBER",
+    memberId,
+    checkOutAt: null,
+  });
   if (!open.length) return;
 
   const now = Date.now();
@@ -93,11 +115,44 @@ export const checkIn = async (req, res) => {
 
     const today = startOfDay();
     const existing = await Attendance.findOne({
+      subjectType: "MEMBER",
       memberId: req.member.id,
       date: today,
     });
 
     if (existing) {
+      /**
+       * A REFUSED SCAN EARLIER TODAY IS NOT A COMPLETED SESSION.
+       *
+       * The QR path records a denial as a CLOSED row carrying deniedReason
+       * (attendanceScan.controller.js), which to the two branches below looks
+       * exactly like a workout already finished — so without this the member
+       * would tap the button and be told "see you tomorrow", having trained
+       * nowhere. The unique { memberId, date } index means the row cannot be
+       * left alone and a second one inserted, so it is converted in place.
+       *
+       * This deliberately does NOT re-run eligibility. The button has never
+       * evaluated subscription state and Phase 3 did not change that — the
+       * gating belongs to the QR path, which is where the verdict is shown.
+       * Adding it here would silently turn the existing button into a gate.
+       */
+      if (existing.deniedReason) {
+        existing.deniedReason = null;
+        existing.checkInAt = new Date();
+        existing.checkOutAt = null;
+        existing.autoClosed = false;
+        existing.source = "SELF";
+        existing.branch = member.branch;
+        await existing.save();
+
+        return res.status(200).json({
+          isOk: true,
+          status: 200,
+          message: `Checked in at ${member.branch}`,
+          data: withDuration(existing),
+        });
+      }
+
       // Two different situations, two different messages — "already checked in"
       // for a member standing at the door, and "come back tomorrow" for one who
       // already trained and left.
@@ -119,10 +174,19 @@ export const checkIn = async (req, res) => {
     }
 
     const session = await Attendance.create({
+      // The discriminator is written explicitly rather than left to the schema
+      // default: this is the row that becomes footfall, and "the default will
+      // cover it" is how a row ends up in neither bucket.
+      subjectType: "MEMBER",
       memberId: req.member.id,
+      trainerId: null,
       checkInAt: new Date(),
       checkOutAt: null,
       autoClosed: false,
+      deniedReason: null,
+      // The button path, not the QR. Both write the same shape of row (D2b) and
+      // this is the only field that separates them.
+      source: "SELF",
       branch: member.branch,
       date: today,
     });
@@ -153,9 +217,14 @@ export const checkIn = async (req, res) => {
 export const checkOut = async (req, res) => {
   try {
     const session = await Attendance.findOne({
+      subjectType: "MEMBER",
       memberId: req.member.id,
       date: startOfDay(),
       checkOutAt: null,
+      // A refused scan is a closed row with a reason on it, never an open
+      // session, so this cannot pick one up — but saying so keeps the
+      // check-out path honest if that ever changes.
+      deniedReason: null,
     });
 
     if (!session) {
@@ -199,6 +268,7 @@ export const getToday = async (req, res) => {
 
     const minutes = sessionLengthOf(member);
     const session = await Attendance.findOne({
+      subjectType: "MEMBER",
       memberId: req.member.id,
       date: startOfDay(),
     });
@@ -366,8 +436,12 @@ export const listAttendance = async (req, res) => {
     }
 
     const sessions = await Attendance.find({
+      subjectType: "MEMBER",
       memberId: req.member.id,
       date: { $gte: start, $lte: end },
+      // Refused attempts are not sessions. Leaving them in would break the
+      // member's own streak and minute totals with days they were turned away.
+      deniedReason: null,
     })
       .sort({ date: 1 })
       .lean();

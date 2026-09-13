@@ -22,6 +22,26 @@ const countBranchUsage = async (name) => {
       Member.countDocuments({ branch: name }),
       Trainer.countDocuments({ branch: name }),
       Transaction.countDocuments({ branch: name }),
+      /**
+       * ====================================================================
+       * THE ONE ATTENDANCE QUERY IN THIS CODEBASE THAT MUST **NOT** FILTER ON
+       * subjectType. NOT AN OVERSIGHT — DO NOT "FIX" IT.
+       * ====================================================================
+       * Every other query against Attendance asks about PEOPLE ("how many
+       * members came to Vasna in March"), and each of those has to say which
+       * kind of person or trainer shifts silently inflate member footfall
+       * (models/Attendance.js).
+       *
+       * This one asks about the BRANCH NAME itself: "is this string still
+       * written into any record, such that renaming or deleting the branch
+       * would orphan it?" A trainer's shift carries `branch` exactly as a
+       * member's visit does, and a rename would orphan it exactly as badly.
+       * Filtering here would under-count, the rename would be allowed, and
+       * every trainer shift at the old name would become unreachable.
+       *
+       * Denied scans are counted for the same reason: they are rows carrying
+       * the name.
+       */
       Attendance.countDocuments({ branch: name }),
       Employee.countDocuments({ branch: name }),
     ]);
