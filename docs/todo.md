@@ -474,7 +474,8 @@ row carrying a query string matches nothing, resolves to no `menuId`, and
 - [x] Frontend chrome reads `header` / `footer` / `social` via `getSiteChrome()`
       with `site.ts` fallbacks; revalidate route maps those keys to marketing
       paths (active again when Next hosting returns)
-- [ ] `transformations` has no `/cms/*` screen (it was not in the twelve
+- [x] `transformations` now HAS `/cms/transformations`, with a drift test
+  pinning the mapping to its menu-tree row. Original note: it was not in the twelve
       requested routes), so it still resolves to `/website-pages` — **by design**
 
 Upside worth having: per-page permissions become possible, so a staff member
@@ -513,15 +514,22 @@ can be allowed to edit FAQs without being able to touch pricing.
 
 ## Measured findings, not yet scheduled
 
-- [ ] **187 unlabelled form controls across the admin panel.** Measured, not
-  estimated: an audit mirroring the browser gate's rules (which correctly reject
+- [x] **187 unlabelled form controls across the admin panel** — now **0**,
+  re-measured with `Gym-Admin/scripts/a11y-names.mjs` (AST-based, applies the
+  gate's rule that `placeholder` is not an accessible name) across 203 files.
+  Commit bd21b23 had already fixed them; the script exists so this is provable
+  on demand instead of resting on a one-off count. Original note follows.
+  Measured, not estimated: an audit mirroring the browser gate's rules (which correctly reject
   `placeholder` as an accessible name) over all 204 JSX files in
   `Gym-Admin/src`. The gate only sweeps the routes it is given, so it has been
   green while most of the panel went unaudited. Every screen built in Phases
   1–4 is clean; the older ones largely are not. This is real work touching
   screens no phase covers — scope it deliberately rather than folding it into
   an unrelated change.
-- [ ] `Gym-frontend/src/app/(portal)/attendance/page.tsx` is 1226 lines against
+- [x] `Gym-frontend/src/app/(portal)/attendance/page.tsx` — split, now **633**
+  lines; calendar, session list, muscle groups, workout detail, formatters and
+  types extracted to `src/components/portal/`. Pure refactor, build green.
+  Original note: it was 1226 lines against
   a 800-line guideline. It was 1085 before Phase 3, and the new work went into
   two separate components rather than growing it further. Splitting the calendar
   and session list out is its own refactor.
