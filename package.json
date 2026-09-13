@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "test": "jest",
-    "test:unit": "node --test scripts/tests/scoping.test.mjs scripts/tests/auditLog.test.mjs scripts/tests/eligibility.test.mjs scripts/tests/booking.test.mjs scripts/tests/reminders.test.mjs scripts/tests/cmsPermission.test.mjs scripts/tests/attendanceOverride.test.mjs scripts/tests/superAdminGate.test.mjs",
+    "test:unit": "node --test scripts/tests/scoping.test.mjs scripts/tests/auditLog.test.mjs scripts/tests/eligibility.test.mjs scripts/tests/booking.test.mjs scripts/tests/reminders.test.mjs scripts/tests/cmsPermission.test.mjs scripts/tests/attendanceOverride.test.mjs scripts/tests/superAdminGate.test.mjs scripts/tests/employeeRolesEscalation.test.mjs",
     "start": "nodemon server.js --host 0.0.0.0",
     "seed:menus": "node scripts/seedMenus.js",
     "seed:website-menus": "node scripts/seedWebsiteMenus.js",
