@@ -5,22 +5,23 @@ import MembershipPlan from "../../models/MembershipPlan.js";
 import { compressToWebP } from "../../middlewares/secureUpload.js";
 import { persistBuffer } from "../../storage/fileStore.js";
 import { scopeFilter, resolveBranchFilter } from "../../middlewares/branchScope.js";
+/**
+ * The dashboard's cohort definitions moved OUT of this file in Phase 5 so that
+ * the reminder cron could read the same ones. Two definitions of "expiring in 7
+ * days" would disagree at the edges and disagree SILENTLY — a member emailed
+ * "your membership expires in 7 days" who does not appear in the list below.
+ * See services/memberCohorts.js. Behaviour here is unchanged by the move.
+ */
+import {
+  MEMBER_COHORTS,
+  cohortFilter,
+  hasPaymentDue,
+  listStatusFilter,
+  startOfToday,
+} from "../../services/memberCohorts.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-
-/** Midnight today, so "expiring in 7 days" ignores clock time. */
-const startOfToday = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-
-const endOfDay = (date) => {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-};
 
 /**
  * Converts an uploaded image to WebP and returns the stored path.
@@ -520,18 +521,12 @@ export const listMembersByParams = async (req, res) => {
     const effectiveBranch = resolveBranchFilter(req, branch);
     if (effectiveBranch) matchCondition.branch = effectiveBranch;
 
-    const today = startOfToday();
-    const in7Days = endOfDay(
-      new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000),
-    );
-
-    if (status === "EXPIRING") {
-      matchCondition.endDate = { $gte: today, $lte: in7Days };
-    } else if (status === "EXPIRED") {
-      matchCondition.endDate = { $lt: today };
-    } else if (status === "ACTIVE") {
-      matchCondition.endDate = { $gt: in7Days };
-    }
+    // The ACTIVE / EXPIRING / EXPIRED chips. Same date boundaries the dashboard
+    // and the reminder cron use — see services/memberCohorts.js. Note this does
+    // NOT constrain isActive, deliberately: staff use these chips to find
+    // deactivated members too.
+    const endDateFilter = listStatusFilter(status);
+    if (endDateFilter) matchCondition.endDate = endDateFilter;
 
     const safeMatch = typeof match === "string" ? match.trim() : "";
     if (safeMatch) {
@@ -584,13 +579,12 @@ export const listMembersByParams = async (req, res) => {
 export const getMemberDashboardStats = async (req, res) => {
   try {
     const today = startOfToday();
-    const in7Days = endOfDay(
-      new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000),
-    );
 
     // Every figure on this dashboard is branch-scoped. This used to take no
     // request at all (`_req`) and so reported gym-wide totals to everyone —
     // a Vasna admin saw Gotri's member count, revenue and outstanding dues.
+    //
+    // Spread LAST over each cohort filter, so it is authoritative.
     const scope = scopeFilter(req);
 
     const [totalMembers, activeMembers, expiringSoon, expired] =
@@ -601,23 +595,26 @@ export const getMemberDashboardStats = async (req, res) => {
           isActive: true,
           endDate: { $gte: today },
         }),
-        Member.find({
-          ...scope,
-          isActive: true,
-          endDate: { $gte: today, $lte: in7Days },
-        })
+        Member.find({ ...cohortFilter(MEMBER_COHORTS.EXPIRING_SOON), ...scope })
           .sort({ endDate: 1 })
           .limit(50),
-        Member.find({ ...scope, isActive: true, endDate: { $lt: today } })
+        Member.find({ ...cohortFilter(MEMBER_COHORTS.EXPIRED), ...scope })
           .sort({ endDate: 1 })
           .limit(50),
       ]);
 
-    // "Payment due" = money outstanding for the current period. Computed in JS
-    // because balance is a virtual derived from the payments subdocuments.
-    const allActive = await Member.find({ ...scope, isActive: true });
+    // "Payment due" = money outstanding for the CURRENT PERIOD, which is
+    // exactly what Member.payments[] describes (see the money note in
+    // services/memberCohorts.js — the Transaction-ledger rule is about reports,
+    // and nothing here is one). Filtered in JS because the balance is a virtual
+    // and there is no stored field to query on; cohortFilter() returns only the
+    // isActive half for that reason.
+    const allActive = await Member.find({
+      ...cohortFilter(MEMBER_COHORTS.PAYMENT_DUE),
+      ...scope,
+    });
     const paymentDue = allActive
-      .filter((m) => m.balanceAmount > 0)
+      .filter((m) => hasPaymentDue(m))
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))
       .slice(0, 50)
       .map((m) => ({

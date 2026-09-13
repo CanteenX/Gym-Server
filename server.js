@@ -371,6 +371,8 @@ import branchRoutes from "./routes/v1/branches.routes.js";
 import siteRoutes from "./routes/v1/site.routes.js";
 import reportRoutes from "./routes/v1/reports.routes.js";
 import auditLogRoutes from "./routes/v1/auditLog.routes.js";
+import classRoutes from "./routes/v1/classes.routes.js";
+import jobRoutes from "./routes/v1/jobs.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -406,6 +408,15 @@ app.use("/api/v1", siteRoutes);
 // SPA catch-all below swallows them.
 app.use("/api/v1", reportRoutes);
 app.use("/api/v1", auditLogRoutes);
+// Phase 5. Class booking: public timetable + free-trial form, the member
+// portal's own booking routes, and the staff diary/roster. Same flat mount as
+// everything else, and it must stay under /api/ or the SPA catch-all below
+// swallows it.
+app.use("/api/v1", classRoutes);
+// Scheduled jobs (the reminder cron). No session and no menu row - a shared
+// secret in CRON_SECRET is the whole of its authentication, see
+// controllers/v1/jobs.controller.js.
+app.use("/api/v1", jobRoutes);
 
 console.log("✅ V1 API routes loaded");
 

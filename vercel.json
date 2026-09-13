@@ -31,6 +31,12 @@
       "destination": "/api/index.js"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/v1/jobs/reminders",
+      "schedule": "30 3 * * *"
+    }
+  ],
   "git": {
     "deploymentEnabled": false
   }

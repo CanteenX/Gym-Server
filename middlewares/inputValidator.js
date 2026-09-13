@@ -385,6 +385,48 @@ export const createLeadValidation = [
     handleValidationErrors,
 ];
 
+/**
+ * Public class booking (Phase 5) — POST /api/v1/classes/:id/book.
+ *
+ * Deliberately the same shape as createLeadValidation, because it feeds the
+ * same place: a public booking creates (or reuses) a Lead, and the name, phone
+ * and email are re-rendered on the admin roster and in a notification email.
+ * A separate array rather than reusing that one, because this endpoint takes no
+ * `message`, no `source` and no `branch` — the branch comes from the class, not
+ * from the visitor — and accepting fields the controller ignores invites
+ * somebody to start honouring them later.
+ *
+ * `id` is validated as a path param here so an invalid ObjectId never reaches a
+ * database call, and `website` is the honeypot (enforced in the controller).
+ */
+export const createBookingValidation = [
+    param('id')
+        .isMongoId().withMessage('Invalid class id'),
+    body('name')
+        .trim()
+        .notEmpty().withMessage('Name is required')
+        .isLength({ min: MIN_LENGTHS.NAME, max: MAX_LENGTHS.NAME })
+        .withMessage(`Name must be between ${MIN_LENGTHS.NAME} and ${MAX_LENGTHS.NAME} characters`)
+        .customSanitizer(sanitizeString),
+    body('phone')
+        .trim()
+        .notEmpty().withMessage('Phone number is required')
+        .isLength({ min: 6, max: MAX_LENGTHS.PHONE })
+        .withMessage(`Phone number must be between 6 and ${MAX_LENGTHS.PHONE} characters`)
+        .matches(/^[+\d\s\-()]+$/).withMessage('Phone number contains invalid characters'),
+    body('email')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isEmail().withMessage('Please provide a valid email address')
+        .isLength({ max: MAX_LENGTHS.EMAIL }).withMessage(`Email must not exceed ${MAX_LENGTHS.EMAIL} characters`)
+        .normalizeEmail(),
+    body('website')
+        .optional({ values: 'null' })
+        .isLength({ max: MAX_LENGTHS.SHORT_TEXT })
+        .withMessage('Invalid submission'),
+    handleValidationErrors,
+];
+
 // ============ MIDDLEWARE TO REJECT UNEXPECTED FIELDS ============
 
 /**
@@ -452,6 +494,7 @@ export default {
     passwordResetValidation,
     searchValidation,
     createLeadValidation,
+    createBookingValidation,
     allowOnlyFields,
     allowedLoginFields,
     allowedEmployeeFields,
