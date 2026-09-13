@@ -189,23 +189,37 @@ Open item for the owner:
 
 ---
 
-## Phase 4 — Visibility: attendance views, reports, exports, audit log (10–14 h)
+## Phase 4 — Visibility: attendance views, reports, exports, audit log — DONE except live deploy
 
-- [ ] `GET /api/v1/attendance/*` staff routes (footfall per branch/day, in-gym now, not-checked-in-14d) — all through `scopeFilter`, filtered on `subjectType`
-- [ ] Admin Attendance page; "not **checked in** for 14 days" label, framed as a call prompt
-- [ ] Reports: collections by month/branch, expiry pipeline, member ageing, P&L with `"Common"` isolated
-- [ ] Exports: revive `ExportCSVModal`; server-side CSV; `financialScopeFilter` applied
-- [ ] `AuditLog` model + `AsyncLocalStorage` actor plumbing in early Express middleware + mongoose hooks + admin viewer
-- [ ] `MenuMaster` rows seeded
+Commits: `fd68998` (server) · `44abe39` (admin)
 
-**Tests (required)**
-- [ ] Export as branch admin cannot include other branch or `"Common"` rows
-- [ ] Super admin export includes `"Common"`; branch admin's does not
+- [x] `GET /api/v1/attendance/{footfall,live,not-checked-in}` — staff routes, branch-scoped. **None existed before**: members checked in through the portal and no staff could see any of it
+- [x] Admin Attendance Overview. Wording holds throughout: "Members to call — no check-in logged", column "Last logged check-in", never-checked-in reads "Never logged one / Portal may not be set up". The word "visited" appears nowhere, because attendance is self-reported and the data cannot support that claim
+- [x] Reports: collections by month/branch, expiry pipeline, member ageing, P&L with `"Common"` isolated — **verified live**: `branches: [Gotri, Vasna]`, `common` and `consolidated` separate keys
+- [x] The consolidated card states up front that it will **not** equal the branch nets added together, and shows that sum inline — so the discrepancy is explained rather than discovered
+- [x] `common`/`consolidated` are `null` for a branch admin and are never rendered as zero; the panel explains the costs were never charged to that branch, so nothing is missing from it
+- [x] Exports: `ExportCSVModal` revived. **Root cause of it being dead code found**: it imported `react-csv`, which is not in `package.json`, so every render threw at import time. CSV is assembled inline now with formula-injection prefixing, so a member name starting `=` or `+` cannot execute in Excel
+- [x] Exports require the **print** permission, not read — a screen stays on screen, a CSV leaves the building
+- [x] `AuditLog` + `AsyncLocalStorage` actor plumbing + admin viewer. **Verified live**: a test write recorded `UPDATE | SiteItem | actor: Mid City Gym | fields: subtitle`
+- [x] `Insights` menu group seeded (least-privilege, no blanket grant)
+- [x] Six indexes added, including `memberId` on `Transaction` which had **none** — the member-ageing `$lookup` was a collection scan per member
+
+**Two bugs the agent found while testing its own work**
+- [x] Redaction ran **before** the diff, so a password change collapsed to `[REDACTED]` vs `[REDACTED]`, compared equal, and wrote **no row at all** — the event most worth recording was the one silently missing
+- [x] A global mongoose plugin **does** reach child schemas, so `Member.payments[]` emitted a row per subdocument until the hooks guarded on `$isSubdocument`
+
+**Tests**
+- [x] `npm run test:unit` — **33/33 pass**, no DB required. Proves a Gotri admin asking for `?branch=Vasna` or `?branch=Common` still gets `{branch:"Gotri"}` on every one of footfall / live / not-checked-in / collections / P&L / expiry / ageing / all three exports / audit list; a super admin is unrestricted
+- [x] P&L asserts `branches[]` never contains Common, that Common's expense does not land in a branch, and that `splitCommon` drops Common rows even if a bypassed helper returned them
 
 **Gate**
-- [ ] Code review
-- [ ] Browser: attendance page renders real data; export downloads and opens; audit viewer shows a change just made with the right actor; 1440 + 390 px
-- [ ] Live smoke green
+- [x] Code review — every financial claim re-verified against the live DB rather than taken from the report
+- [x] Browser: **GATE PASSED**, 41 checks, all three screens swept
+- [x] Charts carry a table alternative — a canvas is invisible to a screen reader and to the gate
+- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+
+Carried forward:
+- [ ] When Phase 3 adds `Attendance.subjectType`, these queries must filter on it or trainer shifts will appear in member footfall
 
 ---
 
