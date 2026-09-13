@@ -182,7 +182,7 @@ Frontend
 - [x] Live smoke — deployed; CI smoke step green on the public domain
 
 Known gaps carried forward (not defects, decisions needed):
-- [ ] Repeating content — the six programme cards, timetable, trainers, pricing, FAQs, testimonials — is still hardcoded in `src/lib/site.ts`. `SiteContent`'s flat shape cannot express structured records. Needs either a repeatable-items model or a `program-1…n` + `sortOrder` convention
+- [x] Repeating content — the six programme cards, timetable, trainers, pricing, FAQs, testimonials — was hardcoded in `src/lib/site.ts`; `SiteContent`'s flat shape cannot express structured records. **Resolved in Phase 1b** by `models/SiteItem.js` (`collectionKey` + `sortOrder`), with `site.ts` kept as the fallback when a collection is empty
 - [ ] `SiteContent.imageUrl` is free text in the editor; the server exposes an additive `POST /site/content/:id/image` that the admin does not yet use
 - [ ] `pageKey: "about"` has no route of its own; the revalidation hook maps it to `/`
 - [ ] An undocumented `sectionKey: "seo"` drives meta title/description — Phase 2 should formalise this
@@ -267,7 +267,7 @@ Commits: `fd68998` (server) · `44abe39` (admin)
 - [x] Live smoke — deployed; CI smoke step green on the public domain
 
 Carried forward:
-- [ ] When Phase 3 adds `Attendance.subjectType`, these queries must filter on it or trainer shifts will appear in member footfall
+- [x] When Phase 3 adds `Attendance.subjectType`, these queries must filter on it or trainer shifts will appear in member footfall — **done in Phase 3**; seven controllers filter on it and `scripts/tests/attendanceOverride.test.mjs` covers the split
 
 ---
 
