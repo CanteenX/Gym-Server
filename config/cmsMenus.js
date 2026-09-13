@@ -92,11 +92,15 @@ export const CMS_PAGE_MENUS = Object.freeze({
  *                          the card — which is not a distinction anyone asked
  *                          for.
  *
- * `transformations` is ABSENT ON PURPOSE. The restructure specified twelve
- * routes and a transformations screen was not one of them, so that list has no
- * per-page row and falls back to CMS_FALLBACK_MENU_URL — i.e. it keeps exactly
- * today's behaviour. Add a row here and to CMS_MENU_TREE together if it ever
- * gets a screen.
+ * `transformations` was ABSENT until it was given a screen of its own. It was
+ * left out of the original twelve routes and therefore fell back to
+ * CMS_FALLBACK_MENU_URL, which meant editing the before/after gallery required
+ * the all-pages grant — the one thing this restructure exists to avoid. It now
+ * has `/cms/transformations` here AND a row in CMS_MENU_TREE below: a mapping
+ * without a tree row would resolve to a menu that the seed never creates, and
+ * checkPermission would silently fall through to the fallback anyway. The two
+ * always move together, which is what the drift test in
+ * scripts/tests/cmsPermission.test.mjs pins.
  */
 export const CMS_COLLECTION_MENUS = Object.freeze({
   programs: "/cms/programs",
@@ -105,6 +109,7 @@ export const CMS_COLLECTION_MENUS = Object.freeze({
   trainers: "/cms/trainers",
   testimonials: "/cms/testimonials",
   classes: "/cms/classes",
+  transformations: "/cms/transformations",
 });
 
 /**
@@ -176,6 +181,16 @@ export const CMS_MENU_TREE = Object.freeze([
         menuUrl: "/cms/classes",
         sequence: 6,
         icon: "ri-calendar-2-line",
+      },
+      {
+        // Last in sequence rather than slotted in alphabetically: the six rows
+        // above have been in the owner's sidebar since the restructure shipped,
+        // and renumbering them would move every entry under the cursor for a
+        // screen that is new. An added row goes at the end.
+        menuName: "Transformations",
+        menuUrl: "/cms/transformations",
+        sequence: 7,
+        icon: "ri-gallery-line",
       },
     ],
   },

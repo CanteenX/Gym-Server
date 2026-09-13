@@ -211,6 +211,13 @@ test("collectionKey maps to its own CMS menu; 'plans' is the Pricing screen", ()
   assert.equal(menuUrlForCollectionKey("faqs"), "/cms/faqs");
   assert.equal(menuUrlForCollectionKey("plans"), "/cms/pricing");
   assert.equal(menuUrlForCollectionKey("classes"), "/cms/classes");
+  // `transformations` got a screen of its own after the original twelve, so it
+  // now resolves to a real row instead of the all-pages fallback. Pinned here
+  // because the whole point of giving it a screen was the narrower permission.
+  assert.equal(
+    menuUrlForCollectionKey("transformations"),
+    "/cms/transformations",
+  );
   assert.notEqual(menuUrlForCollectionKey("faqs"), "/cms/pricing");
 });
 
@@ -220,9 +227,15 @@ test("keys are normalised: whitespace and case cannot dodge the mapping", () => 
 });
 
 test("an unmapped key falls back to the all-pages permission, never to none", () => {
-  // `transformations` has no screen of its own, and pageKey is deliberately not
-  // an enum, so keys invented in the data must still land on a real check.
-  assert.equal(menuUrlForCollectionKey("transformations"), CMS_FALLBACK_MENU_URL);
+  // Neither collectionKey nor pageKey is an enum, so a key invented in the data
+  // must still land on a REAL check rather than on no check at all. This used to
+  // be demonstrated with `transformations`; that key now has its own screen, so
+  // the case is made with a list that genuinely has no row.
+  assert.equal(
+    menuUrlForCollectionKey("a-list-invented-tomorrow"),
+    CMS_FALLBACK_MENU_URL,
+  );
+  assert.equal(menuUrlForCollectionKey(undefined), CMS_FALLBACK_MENU_URL);
   assert.equal(menuUrlForPageKey("a-page-invented-tomorrow"), CMS_FALLBACK_MENU_URL);
   assert.equal(menuUrlForPageKey(undefined), CMS_FALLBACK_MENU_URL);
   assert.equal(menuUrlForPageKey(null), CMS_FALLBACK_MENU_URL);
@@ -242,7 +255,9 @@ test("the seeded tree and the two key maps cannot drift apart", () => {
     assert.ok(leaves.includes(url), `${url} is mapped but never seeded`);
   }
 
-  // And the twelve routes the restructure specified are all present.
+  // And the routes the restructure specified are all present — the original
+  // twelve plus /cms/transformations, added when the before/after gallery was
+  // given a screen instead of living on the all-pages grant.
   assert.deepEqual(
     [...leaves].sort(),
     [
@@ -258,14 +273,15 @@ test("the seeded tree and the two key maps cannot drift apart", () => {
       "/cms/social",
       "/cms/testimonials",
       "/cms/trainers",
+      "/cms/transformations",
     ],
-    "the CMS tree no longer matches the twelve specified routes",
+    "the CMS tree no longer matches the specified routes",
   );
 
   const parent = CMS_MENU_TREE.find((r) => r.menuName === "Content Management");
   assert.ok(parent, "the Content Management parent row is missing");
   assert.equal(parent.menuUrl, "#", "a parent row must not carry a real path");
-  assert.equal(parent.children.length, 6);
+  assert.equal(parent.children.length, 7);
 });
 
 // ===================================================================

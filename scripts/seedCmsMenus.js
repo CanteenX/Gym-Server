@@ -13,7 +13,8 @@
  *   │   ├── FAQs             /cms/faqs
  *   │   ├── Trainers         /cms/trainers
  *   │   ├── Testimonials     /cms/testimonials
- *   │   └── Classes          /cms/classes
+ *   │   ├── Classes          /cms/classes
+ *   │   └── Transformations  /cms/transformations
  *   ├── Header               /cms/header
  *   ├── Footer               /cms/footer
  *   └── Social & Media       /cms/social
