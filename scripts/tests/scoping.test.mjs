@@ -255,7 +255,20 @@ test("footfall: a super admin is unrestricted by default and narrows on request"
   }
 });
 
-test("live: both the open-session query and the stale count carry the branch", async () => {
+/**
+ * All FOUR queries the live feed now runs carry the branch.
+ *
+ * It was two — open sessions and the stale count — until Phase 3's denial gap
+ * was closed and the feed also began returning today's refusals plus their
+ * count (attendanceStaff.controller.js). The exact number is asserted, not just
+ * "every filter seen", so that a fifth query added later cannot slip in
+ * unscoped: a filter that is never built is also never checked by the loop
+ * above it.
+ *
+ * See scripts/tests/attendanceOverride.test.mjs for what those two new queries
+ * actually ask for.
+ */
+test("live: all four queries — sessions, stale, denials, denial count — carry the branch", async () => {
   const s = stub(Attendance, {
     find: () => fakeQuery([]),
     countDocuments: async () => 0,
@@ -265,7 +278,7 @@ test("live: both the open-session query and the stale count carry the branch", a
     await getInGymNow(gotriAdmin({ branch: "Common" }), res);
     assert.equal(res.statusCode, 200);
     for (const f of s.filters()) assert.equal(f.branch, "Gotri");
-    assert.equal(s.filters().length, 2);
+    assert.equal(s.filters().length, 4);
   } finally {
     s.restore();
   }

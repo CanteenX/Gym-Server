@@ -101,6 +101,67 @@ const AttendanceSchema = new mongoose.Schema(
     },
 
     /**
+     * The staff override of a refusal — "was denied for X, overridden by Y at Z".
+     *
+     * ========================================================================
+     * WHY THE REFUSAL IS MOVED HERE RATHER THAN LEFT IN deniedReason.
+     * ========================================================================
+     * A member wrongly refused at the door settles it at reception, and staff
+     * mark the row allowed (controllers/v1/attendanceOverride.controller.js).
+     * Two things have to be true afterwards and they pull against each other:
+     *
+     *   1. The row must stop being a refusal. Sixteen audited call sites count
+     *      attendance with `deniedReason: null` — the live feed, footfall, the
+     *      exports, the churn list. Leaving deniedReason set and adding an
+     *      "overridden" flag beside it would mean teaching EVERY one of those
+     *      queries about the flag, and the one that got missed would keep
+     *      showing a resolved refusal in the front desk's face forever.
+     *
+     *   2. The refusal must not be erasable. Simply nulling deniedReason
+     *      produces a clean row that looks like the member was never turned
+     *      away — destroying the evidence of a staff override that may have
+     *      involved money owed, which is exactly what an audit trail exists to
+     *      prevent.
+     *
+     * So deniedReason IS cleared (every existing query keeps working untouched)
+     * and the original is copied in here together with who overrode it and
+     * when. Nothing is lost and nothing has to be re-taught.
+     *
+     * Null on every row that was never overridden, which is almost all of them.
+     * `_id: false` because this is one embedded fact about the parent, not a
+     * collection member; it needs no identity of its own.
+     *
+     * NOTE the self-service path is deliberately NOT recorded here: when a
+     * member pays at the desk and re-scans, attendanceScan.controller.js
+     * upgrades the row itself and no staff decision was made. This field means
+     * "a member of staff overrode the system", which is the auditable event.
+     */
+    denialOverride: {
+      type: new mongoose.Schema(
+        {
+          /** The deniedReason this row carried before the override. */
+          originalReason: { type: String, required: true },
+          /** When the refusal itself was recorded. */
+          deniedAt: { type: Date, default: null },
+          /** Copied, not referenced — the row must still read after a leaver. */
+          actorId: { type: String, default: "" },
+          actorName: { type: String, default: "" },
+          actorRole: { type: String, default: "" },
+          overriddenAt: { type: Date, required: true },
+          /** Optional free text from reception, e.g. "paid, receipt 1042". */
+          note: { type: String, default: "" },
+          /**
+           * Whether the override also opened a live session. False when the
+           * refusal was not from today — see the controller.
+           */
+          sessionOpened: { type: Boolean, default: false },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
+    /**
      * How the session was started: the portal button, or the branch QR.
      *
      * Both paths write the same shape of row on purpose (plan.md D2b) — if the

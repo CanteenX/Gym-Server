@@ -54,11 +54,21 @@ const INSIGHTS_MENUS = [
 /**
  * What --grant-all actually grants, and why it is not read+write+edit+delete.
  *
- * These three screens have no write endpoints at all: the attendance views and
- * the reports are reads, and the audit log is deliberately read-only (a trail
- * an operator can edit is not a trail). Granting write/edit/delete would hand
- * out permissions that authorise nothing today and would silently authorise
+ * /reports and /audit-log have no write endpoints at all — the reports are
+ * reads, and the audit log is deliberately read-only (a trail an operator can
+ * edit is not a trail). Granting write/edit/delete there would hand out
+ * permissions that authorise nothing today and would silently authorise
  * something the day an endpoint is added.
+ *
+ * /attendance-overview DOES have one write since Phase 3's denial work:
+ * POST /api/v1/attendance/:id/mark-allowed, behind
+ * checkPermission("/attendance-overview", "edit"). It is STILL not granted
+ * here, and that is the decision rather than an oversight. Overriding a refusal
+ * is reversing a system decision in a member's favour, usually with money
+ * behind it; it belongs to whoever runs the front desk, not to everyone who may
+ * look at the attendance screen. The super admin ticks "edit" for that role on
+ * the Employee Roles screen. (A super admin needs no grant at all —
+ * checkPermission returns next() for role === "ADMIN".)
  *
  * "print" is granted only on /reports, because that is the flag the CSV export
  * routes check — a download leaves the building, so it is a separate decision

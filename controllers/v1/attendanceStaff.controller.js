@@ -66,8 +66,12 @@ import {
  * an unrecognised value falls back to MEMBER rather than to "everything",
  * because the failure mode of guessing wrong must be a number that is too
  * small and obviously so, not one that is too big and plausible.
+ *
+ * Exported so the override handler (attendanceOverride.controller.js) uses this
+ * exact definition rather than a second copy of it. A second copy is how the
+ * two drift, and the drift is silent.
  */
-const subjectFilter = (req) => {
+export const subjectFilter = (req) => {
   const asked = String(req.query?.subjectType || "").trim().toUpperCase();
   if (asked === "ALL") return {};
   if (asked === "TRAINER") return { subjectType: "TRAINER" };
@@ -89,6 +93,21 @@ const subjectLabel = (req) => {
  * no backfill to be correct.
  */
 const NOT_DENIED = { deniedReason: null };
+
+/**
+ * The mirror of NOT_DENIED: rows that ARE refusals.
+ *
+ * `$ne: null` rather than `$exists: true`, for the same reason NOT_DENIED can
+ * use a bare null — Mongo treats a missing field as null on an equality match,
+ * so a pre-Phase-3 row (no deniedReason field at all) is correctly excluded
+ * here and correctly included there, with no backfill either way.
+ *
+ * An overridden refusal does NOT match this: the override clears deniedReason
+ * and copies the original into `denialOverride` (models/Attendance.js). That is
+ * what makes a resolved denial leave the feed without any query here knowing
+ * the override exists.
+ */
+const IS_DENIED = { deniedReason: { $ne: null } };
 
 /** Midnight local — Attendance.date is stored normalised the same way. */
 const startOfDay = (value) => {
@@ -119,6 +138,13 @@ const MAX_RANGE_DAYS = 366;
  * `staleOpenSessions` rather than shown as a person on the floor.
  */
 const MAX_SESSION_MINUTES = 120;
+
+/**
+ * The most refusals one poll will carry. A denial is a row somebody has to act
+ * on, so a hundred of them is already a queue nobody is working through; the
+ * count beside the list (`deniedToday`) is the honest total.
+ */
+const DENIAL_CAP = 100;
 
 const fail = (res, status, message) =>
   res.status(status).json({ isOk: false, status, message });
@@ -253,6 +279,39 @@ export const getFootfall = async (req, res) => {
  * keeps a 30-second poll's payload near-empty. `serverTime` comes back so the
  * caller can hand it straight to the next poll instead of trusting its own
  * clock.
+ *
+ * ============================================================================
+ * DENIALS RIDE ALONG IN THE SAME RESPONSE, AND ON A DIFFERENT CURSOR FIELD.
+ * ============================================================================
+ * plan.md D2: nobody is at the door, so a refusal cannot stop anyone — the only
+ * thing the system can do is put it in front of staff. Until now it did not:
+ * this endpoint and /footfall both exclude denied rows, so a refusal was
+ * visible only by downloading exports/attendance?includeDenied=true. Somebody
+ * was told on their own phone that their membership had lapsed and nobody knew.
+ *
+ * WHY HERE AND NOT A SECOND ENDPOINT. The panel already polls this one every
+ * 30 s with a `since` cursor. A separate endpoint means a second poll on a
+ * second cursor, and two cursors drift: the moment one request succeeds and the
+ * other fails or is rescheduled, the two lists describe different instants and
+ * "what happened at the door in the last 30 seconds" can no longer be answered
+ * from one payload. One response, one cursor, one answer.
+ *
+ * WHY THE DENIAL CURSOR IS `updatedAt` AND NOT `checkInAt`. A repeat refusal
+ * does NOT create a second row — the unique { memberId, date } index forbids
+ * it, so attendanceScan.controller.js updates today's row in place and leaves
+ * `checkInAt` at the FIRST refusal of the day. Cursoring denials on checkInAt
+ * would therefore mean a member denied at 07:00 who tries again at 07:31 never
+ * appears again: the row's checkInAt is still 07:00, older than every
+ * subsequent `since`, and the second attempt is silently lost between polls.
+ * `updatedAt` moves on every attempt, so each fresh refusal surfaces exactly
+ * once and then stops — which is also what stops a resolved-but-untouched
+ * denial being re-sent forever.
+ *
+ * The comparison is `$gte`, not `$gt`, and deliberately: `serverTime` is
+ * stamped before the queries run, so a row written in between would be returned
+ * by this poll and again by the next. That is a DUPLICATE (dedupe by `_id`),
+ * which is recoverable; `$gt` would turn the same race into a MISS, which is
+ * not.
  */
 export const getInGymNow = async (req, res) => {
   try {
@@ -282,7 +341,43 @@ export const getInGymNow = async (req, res) => {
       ...branchMatch,
     };
 
-    const [sessions, staleOpenSessions] = await Promise.all([
+    /**
+     * Refusals, for the same branch and subject population as the sessions
+     * above — but built from IS_DENIED rather than NOT_DENIED, so the two lists
+     * are disjoint by construction and a denial can never leak into `sessions`,
+     * `inGymNow` or `staleOpenSessions`.
+     *
+     * Scoped to TODAY, and on `date` rather than `checkInAt` for two reasons:
+     * `date` is the normalised midnight, so this is an exact day boundary with
+     * no arithmetic; and it is indexed both on its own (`date_1`) and as the
+     * tail of `{ branch: 1, date: 1 }`, so the query is a small index scan
+     * whether or not a branch narrows it. Without the day bound a super admin's
+     * denial query has no usable index prefix and degenerates into a scan of
+     * every member row ever written.
+     *
+     * Yesterday's refusals are yesterday's: the gym is shut overnight and an
+     * unbounded list would grow into a backlog nobody reads.
+     */
+    const todayStart = startOfDay(now);
+    const denialMatch = {
+      ...IS_DENIED,
+      date: { $gte: todayStart },
+      ...subjectFilter(req),
+      ...(requested ? { branch: requested } : {}),
+      // LAST, and therefore authoritative. A Gotri admin never sees a Vasna
+      // refusal here, exactly as they never see a Vasna session.
+      ...scopeFilter(req),
+    };
+
+    const denialFilter = {
+      ...denialMatch,
+      // See the header: the cursor for a refusal is updatedAt, because a repeat
+      // refusal updates today's row instead of writing a new one.
+      ...(sinceValid ? { updatedAt: { $gte: sinceValid } } : {}),
+    };
+
+    // prettier-ignore
+    const [sessions, staleOpenSessions, denialRows, deniedToday] = await Promise.all([
       Attendance.find(openFilter)
         .select("subjectType memberId trainerId branch checkInAt date")
         .populate("memberId", "fullName mobileNumber photo branch")
@@ -303,6 +398,25 @@ export const getInGymNow = async (req, res) => {
         checkInAt: { $lt: sessionFloor },
         ...branchMatch,
       }),
+      /** The refusals themselves, newest attempt first — see denialFilter. */
+      Attendance.find(denialFilter)
+        .select(
+          "subjectType memberId trainerId branch checkInAt date deniedReason source updatedAt",
+        )
+        .populate("memberId", "fullName mobileNumber photo branch endDate")
+        .populate("trainerId", "fullName mobileNumber branch")
+        .sort({ updatedAt: -1 })
+        .limit(DENIAL_CAP)
+        .lean(),
+      /**
+       * Today's refusals in total, NOT narrowed by the cursor.
+       *
+       * The list answers "what is new since the last poll"; this answers "how
+       * many people were turned away today". A panel that only ever showed the
+       * cursor's slice would read 0 on every quiet poll and make a morning's
+       * refusals look like they never happened.
+       */
+      Attendance.countDocuments(denialMatch),
     ]);
 
     const data = sessions.map((s) => ({
@@ -336,18 +450,77 @@ export const getInGymNow = async (req, res) => {
         : null,
     }));
 
+    /**
+     * The refusals, shaped like the sessions above so one list component can
+     * render both — same `subjectType` / `member` / `trainer` keys, plus why
+     * and when.
+     *
+     * `minutesSoFar` is deliberately ABSENT: a refusal is not a session and
+     * nothing is elapsing. `deniedAt` is the first refusal of the day (the row
+     * keeps its original checkInAt) and `lastAttemptAt` is the most recent one,
+     * so "denied at 07:00, tried again three times since" is readable without
+     * another query.
+     */
+    const denials = denialRows.map((d) => ({
+      _id: d._id,
+      subjectType: d.subjectType || "MEMBER",
+      branch: d.branch,
+      deniedReason: d.deniedReason,
+      deniedAt: d.checkInAt,
+      lastAttemptAt: d.updatedAt || d.checkInAt,
+      source: d.source || "SELF",
+      member: d.memberId
+        ? {
+            _id: d.memberId._id,
+            fullName: d.memberId.fullName,
+            mobileNumber: d.memberId.mobileNumber,
+            photo: d.memberId.photo,
+            // The single most useful thing for the person picking up the phone:
+            // it names what has to be fixed before the next scan succeeds.
+            endDate: d.memberId.endDate || null,
+          }
+        : null,
+      trainer: d.trainerId
+        ? {
+            _id: d.trainerId._id,
+            fullName: d.trainerId.fullName,
+            mobileNumber: d.trainerId.mobileNumber,
+          }
+        : null,
+    }));
+
     return res.status(200).json({
       isOk: true,
       status: 200,
       message: "Open sessions fetched successfully",
       data: {
         serverTime: now,
+        /**
+         * FIRST in the payload because they are first on the screen (plan.md
+         * D2): a refusal is the only row here that somebody has to DO something
+         * about. Everything else is a person happily training.
+         */
+        denials,
+        // New or re-asserted since `since`; the length of the list above.
+        deniedNew: denials.length,
+        // Every refusal today, cursor or no cursor.
+        deniedToday,
+        denialsTruncated: denials.length >= DENIAL_CAP,
+        /**
+         * UNCHANGED, and it has to stay that way. `inGymNow` counts open
+         * sessions only — a refusal is not an arrival, and folding one in here
+         * would move a number Phase 4 already reports.
+         */
         inGymNow: data.length,
         sessions: data,
         staleOpenSessions,
         subjectType: subjectLabel(req),
         basis:
           "Open self-reported sessions. A member can log a session without being present.",
+        denialsBasis:
+          "Refused scans today. A denial did not stop anyone entering — nobody is " +
+          "at the door — so these are people who may be in the gym right now with " +
+          "something unresolved. Not counted in inGymNow or in footfall.",
       },
     });
   } catch (error) {

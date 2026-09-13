@@ -22,6 +22,7 @@ import {
   getInGymNow,
   getNotCheckedIn,
 } from "../../controllers/v1/attendanceStaff.controller.js";
+import { markAttendanceAllowed } from "../../controllers/v1/attendanceOverride.controller.js";
 
 const router = express.Router();
 
@@ -124,6 +125,16 @@ const staffRead = [
 ];
 
 /**
+ * The write half. Same menu, "edit" instead of "read" — overriding a refusal is
+ * changing a record in a member's favour, possibly with money behind it, so it
+ * is not something everyone who can LOOK at the attendance screen may do.
+ */
+const staffEdit = [
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/attendance-overview", "edit"),
+];
+
+/**
  * @swagger
  * /attendance/footfall:
  *   get:
@@ -171,12 +182,61 @@ router.get("/attendance/footfall", ...staffRead, getFootfall);
  *     responses:
  *       200:
  *         description: >
- *           Open sessions started within the longest possible session length,
- *           plus a count of stale open sessions awaiting auto-close.
+ *           `{ denials, deniedNew, deniedToday, inGymNow, sessions,
+ *           staleOpenSessions }`. Denials come FIRST because they are the only
+ *           rows staff must act on (plan.md D2); they are NOT counted in
+ *           inGymNow. The denial list is cursored on `updatedAt`, not
+ *           `checkInAt`, because a repeat refusal updates today's row in place
+ *           — see attendanceStaff.controller.js.
  */
 // Polled by the admin panel every 30-60s: the API is a serverless function and
 // cannot hold a WebSocket (plan.md D2a), so the feed is a small, cheap GET.
 router.get("/attendance/live", ...staffRead, getInGymNow);
+
+/**
+ * @swagger
+ * /attendance/{id}/mark-allowed:
+ *   post:
+ *     summary: Override a refusal — mark a denied check-in as allowed
+ *     tags: [Attendance - Staff]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: The denied Attendance row's _id, from /attendance/live.
+ *       - in: query
+ *         name: subjectType
+ *         schema: { type: string, enum: [MEMBER, TRAINER, ALL], default: MEMBER }
+ *         description: >
+ *           Defaults to MEMBER, like every other query over this collection. A
+ *           trainer's refused shift has to be asked for by name.
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               note: { type: string, maxLength: 300, description: "e.g. paid at desk, receipt 1042" }
+ *     responses:
+ *       200:
+ *         description: >
+ *           Overridden, or already overridden (`alreadyOverridden: true`, no
+ *           second write). `sessionOpened` says whether a live session was
+ *           opened — true for a refusal from today, false for an older one.
+ *       400:
+ *         description: Bad attendance id or note
+ *       404:
+ *         description: No such row, OR it belongs to another branch — the same
+ *           answer on purpose, so an id cannot be probed across branches
+ *       409:
+ *         description: That check-in was never refused
+ *
+ * Writes an AuditLog row through the global mongoose plugin: this is a staff
+ * override of a system decision in a member's favour, which is the case the
+ * audit log was built for.
+ */
+router.post("/attendance/:id/mark-allowed", ...staffEdit, markAttendanceAllowed);
 
 /**
  * @swagger

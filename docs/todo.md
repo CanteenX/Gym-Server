@@ -291,27 +291,57 @@ Commits: `4f3b31f` (server) · `87baa69` (admin) · `71a944a` (portal)
 
 Known limits, by design:
 - [ ] Trainers cannot check out — that route is member-only server-side, so a shift closes on the 480-minute sweep. The screen says so rather than hiding a missing button
-- [ ] Denied scans surface only through the export; the live and footfall endpoints exclude them server-side
+- [x] ~~Denied scans surface only through the export~~ — CLOSED. `/attendance/live` now returns a `denials[]` array alongside `sessions[]`. Footfall still excludes them, and always will: a refusal is not an arrival
 
 ---
 
 ### Phase 3 — what the original checklist asked for and did NOT ship
 
-Everything else on the original Phase 3 list is done and listed above. These
-three are genuinely outstanding, verified by reading the code rather than
-assumed:
+Everything else on the original Phase 3 list is done and listed above. Two of
+the three outstanding items are now closed (see below); the browser walk-through
+with real accounts is the one that remains.
+
+**Tests after closing them:** `npm run test:unit` — **144/144**, was 122/122.
+22 new in `scripts/tests/attendanceOverride.test.mjs`, and one existing
+assertion in `scoping.test.mjs` updated on purpose: `/attendance/live` now runs
+four branch-scoped queries, not two.
 
 - [x] `GET /api/v1/attendance/live?since=` — **implemented**, the cursor
   narrows to arrivals after a timestamp so the poll payload stays small
 - [x] Admin arrivals polling — **implemented**, 30 s, re-entrancy guarded
-- [ ] **Denials surfaced first in the arrivals feed.** Not built. The live and
-  footfall endpoints exclude denied rows server-side, so today a refusal is
-  visible only through `exports/attendance?includeDenied=true`. D2 says these
-  are the rows staff must act on, so they belong in the feed
-- [ ] **"Mark as allowed" override**, writing an `AuditLog` row. Not built.
-  Without it, a member wrongly denied at the door has no path to being fixed
-  from the panel — reception can take payment, but the refusal stands in the
-  record with nothing pointing at its resolution
+- [x] **Denials surfaced first in the arrivals feed.** Built.
+  `GET /attendance/live` now returns `denials[]` **first in the payload**,
+  with `deniedNew` (since the cursor) and `deniedToday` (the day's total)
+  beside it. It is the same endpoint and the same 30 s poll — a second
+  endpoint would mean a second cursor, and two cursors drift.
+  **The denial cursor is `updatedAt`, not `checkInAt`**: a repeat refusal
+  updates today's row in place (the unique `{memberId, date}` index forbids a
+  second), leaving `checkInAt` at the first refusal of the day, so a
+  `checkInAt` cursor would lose every later attempt between polls. `$gte` not
+  `$gt`, so the race against `serverTime` produces a duplicate (dedupe by
+  `_id`), never a miss. `inGymNow`, `sessions`, `staleOpenSessions` and every
+  footfall query are untouched — a refusal is not an arrival
+- [x] **"Mark as allowed" override**, writing an `AuditLog` row. Built:
+  `POST /api/v1/attendance/:id/mark-allowed`, staff session +
+  `checkPermission("/attendance-overview", "edit")`, branch-scoped via
+  `scopeFilter` spread LAST (a Gotri admin gets the same 404 for a Vasna row
+  as for a missing one, so an id cannot be probed across branches).
+  `deniedReason` is cleared — so all 16 `NOT_DENIED` call sites keep working
+  unchanged — and the original is relocated into a new `Attendance.
+  denialOverride` sub-document with the actor, the time and an optional note,
+  so the row reads "was denied for EXPIRED, overridden by Gotri Manager at
+  07:12" rather than looking like it was never refused. A refusal **from
+  today** becomes a live session (the same upgrade `attendanceScan` performs
+  on a re-scan); an older one has the refusal cleared but opens no session and
+  keeps its `date`. The response says which, in `sessionOpened`. Idempotent:
+  a second call finds nothing to do, writes nothing, and therefore emits no
+  second audit row. The `AuditLog` row comes from the global mongoose plugin
+  and is **asserted, not assumed** — the test pulls the real hooks off the
+  real `Attendance` schema
+- [ ] Grant `edit` on `/attendance-overview` to whichever role runs the front
+  desk. `scripts/seedInsightsMenus.js --grant-all` deliberately still grants
+  read only; a super admin needs no grant (checkPermission short-circuits for
+  `role === "ADMIN"`)
 - [ ] Browser-verify the end-to-end door flow with real accounts: active member
   → ALLOWED and the entry appears in the feed; expired member → DENIED with the
   reception message; trainer → `subjectType: TRAINER`. The logic is unit-tested
