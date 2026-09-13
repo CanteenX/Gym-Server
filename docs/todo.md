@@ -480,6 +480,37 @@ row carrying a query string matches nothing, resolves to no `menuId`, and
 Upside worth having: per-page permissions become possible, so a staff member
 can be allowed to edit FAQs without being able to touch pricing.
 
+## Supabase storage for uploads (owner request)
+
+- [x] Bucket `gym-uploads` created on project `zqcltxlpfnwklxtdefok` — public
+  read, 50 MB cap, MIME allowlist covering images, PDF and video
+- [x] Access posture verified against the live project, not assumed: RLS is on
+  with zero policies, so `service_role` writes and anon cannot. An anon-key
+  write was probed and refused — *"new row violates row-level security policy"*
+- [x] Third backend added to `storage/fileStore.js` behind the existing
+  `persistBuffer()` seam. No route, controller or client change: both
+  `fileUrl()` helpers already pass absolute URLs through, so Supabase URLs and
+  legacy relative paths coexist with no migration
+- [x] Uses the Storage REST API over `fetch` rather than `@supabase/supabase-js`
+  — no new dependency, no extra cold-start cost on a function that already
+  boots slowly
+- [x] `npm run verify:storage` — uploads a real PNG through the seam, re-fetches
+  it with no auth header, byte-compares, deletes the probe
+- [x] `SUPABASE_*` documented in `.env.example`; `next.config.ts` already
+  allows `**.supabase.co/storage/**` for `next/image`
+- [ ] **Paste `SUPABASE_SERVICE_ROLE_KEY`** into `Gym-Server/.env` and the
+  `mid-city-gym-api` Vercel env, then run `npm run verify:storage`. Until then
+  uploads keep going to Vercel Blob / local disk — the switch is dormant, not
+  broken. The key is the one value the MCP connection cannot hand over, so the
+  upload path is written and syntax-checked but **not yet proven end to end**
+- [ ] Video upload is NOT enabled. The bucket accepts mp4/webm/mov but
+  `middlewares/secureUpload.js` allows images and PDF only (5 MB / 10 MB caps).
+  Enabling it means widening `ALLOWED_EXTENSIONS`, extending the magic-byte
+  check, raising the cap and keeping `sharp` off for video — a deliberate
+  change, not part of the storage wiring
+- [ ] Optional: migrate existing Blob / local rows into the bucket. Not needed
+  for correctness — old references keep resolving
+
 ## Measured findings, not yet scheduled
 
 - [ ] **187 unlabelled form controls across the admin panel.** Measured, not

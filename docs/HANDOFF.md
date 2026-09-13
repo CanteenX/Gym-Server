@@ -38,9 +38,52 @@ revalidate** until remote Next builds on this Vercel account stop hanging in
 
 ## Do these first
 
-Nothing blocking the checklist close-out. Remaining work is owner/deferred
-(SMS, payments) or measured-but-unscheduled (187 unlabelled controls,
-attendance page split, `.env` secret rotation). See `todo.md`.
+**One thing needs a human: paste the Supabase service-role key.** Everything
+else is owner/deferred (SMS, payments) or measured-but-unscheduled (187
+unlabelled controls, attendance page split, `.env` secret rotation). See
+`todo.md`.
+
+### Supabase storage — one env var away from live
+
+Uploads now have a third backend and it is wired, but it stays dormant until
+the key is set, because the key is the only part that cannot be fetched over
+the MCP connection.
+
+1. Supabase dashboard -> Project Settings -> API -> copy **`service_role`**.
+2. Put three values in `Gym-Server/.env` (and in the Vercel project env for
+   `mid-city-gym-api`):
+
+   ```
+   SUPABASE_URL=https://zqcltxlpfnwklxtdefok.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=<the service_role key>
+   SUPABASE_STORAGE_BUCKET=gym-uploads
+   ```
+
+3. `npm run verify:storage` — uploads a real PNG through the same
+   `persistBuffer()` seam the admin panel uses, re-fetches it with **no auth
+   header** (what a visitor's browser sends), byte-compares, and cleans up.
+   Green means admin uploads work; there is no need to drive the UI to find out.
+
+Set the vars and every upload goes to Supabase in **every** environment,
+ignoring both local disk and Vercel Blob. That is deliberate: one bucket means
+a file uploaded from a dev machine is the file production serves. Leave them
+unset and nothing changes, so it is a reversible switch, not a migration.
+
+The service-role key bypasses row-level security — it is a secret and must
+never reach a client bundle. Verified against the live project: the bucket is
+public to read, and an anon-key write is refused with *"new row violates
+row-level security policy"*. So browsers load images straight from the CDN and
+only the API can put them there.
+
+**Existing images are not migrated.** Old rows hold relative paths or Blob
+URLs; both clients' `fileUrl()` passes absolute URLs through and joins relative
+ones to the API origin, so old and new rows coexist. Only new uploads move.
+
+**Videos are not uploadable yet.** The bucket accepts mp4/webm/mov, but
+`middlewares/secureUpload.js` allows images and PDF only (`ALLOWED_EXTENSIONS`,
+5 MB images / 10 MB documents). Accepting video needs that allowlist widened,
+the magic-byte check extended, the size cap raised, and `sharp` compression
+kept off for video — a deliberate change, not part of the storage wiring.
 
 Already done this pass:
 

@@ -18,7 +18,8 @@
     "seed:email": "node scripts/seedEmailSetup.js",
     "seed:site-content": "node scripts/seedSiteContent.js",
     "seed:branch-roles": "node scripts/seedBranchRolePermissions.js",
-    "migrate:attendance-subject": "node scripts/migrateAttendanceSubjectType.js"
+    "migrate:attendance-subject": "node scripts/migrateAttendanceSubjectType.js",
+    "verify:storage": "node scripts/verifySupabaseStorage.js"
   },
   "keywords": [],
   "author": "",
