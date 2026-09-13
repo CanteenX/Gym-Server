@@ -8,8 +8,9 @@
  * MenuMaster row is a 403 ("Menu '/reports' not found"), not a fallback.
  *
  * The failure is asymmetric and therefore easy to miss: checkPermission returns
- * next() immediately for role === "ADMIN", so the owner sees three working
- * screens while every employee gets 403 on all of them. Run the seed.
+ * next() immediately for the SUPER ADMIN (isSuperAdmin, not the role string —
+ * see middlewares/superAdmin.js), so the owner sees three working screens while
+ * every employee AND every branch admin gets 403 on all of them. Run the seed.
  *
  * Run from the Gym-Server directory:  npm run seed:insights-menus
  *
@@ -68,7 +69,9 @@ const INSIGHTS_MENUS = [
  * behind it; it belongs to whoever runs the front desk, not to everyone who may
  * look at the attendance screen. The super admin ticks "edit" for that role on
  * the Employee Roles screen. (A super admin needs no grant at all —
- * checkPermission returns next() for role === "ADMIN".)
+ * checkPermission returns next() for the super admin.) Branch roles are
+ * granted /attendance-overview and /reports by
+ * scripts/seedBranchRolePermissions.js, which is the script to use for that.
  *
  * "print" is granted only on /reports, because that is the flag the CSV export
  * routes check — a download leaves the building, so it is a separate decision
@@ -127,7 +130,7 @@ export const seedInsightsMenus = async () => {
    * 3. Role grants are OPT-IN, and deliberately not the default.
    *
    *    The rows above are enough for the owner: checkPermission short-circuits
-   *    for role === "ADMIN", PermissionProtected short-circuits on isAdmin, and
+   *    for the super admin, PermissionProtected short-circuits on isAdmin, and
    *    getMenuByGroups returns every active menu without filtering on
    *    permissions. A super admin can use all three screens the moment the rows
    *    exist.

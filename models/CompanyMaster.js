@@ -81,6 +81,30 @@ const CompanyMasterSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    /**
+     * Optional RBAC role, mirroring Employee.roleId.
+     *
+     * WHY A COMPANY ROW HAS A ROLE AT ALL. There are two kinds of row in this
+     * table: the one super admin (isSuperAdmin: true) and any number of
+     * branch-level admins created through Setup → Admin (isSuperAdmin: false).
+     * The second kind used to need no role, because the permission gate
+     * bypassed on `role === "ADMIN"` and every row here logs in as "ADMIN" —
+     * so a branch admin was waved through every check in the system. Now that
+     * only the super admin bypasses, a branch-level row is subject to its
+     * grants like anybody else, and without a roleId it has no grants to be
+     * subject to: ensurePermissionsFresh answers "No permissions found for this
+     * role" and the account is locked out of every gated screen.
+     *
+     * OPTIONAL, and absent on existing rows — including the super admin, who
+     * needs no grants by definition. Nothing changes for a row that does not
+     * set it. scripts/seedBranchRolePermissions.js is what assigns one.
+     */
+    roleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "RoleMaster",
+      required: false,
+      default: null,
+    },
     sidebarBgColor: {
       type: String,
       default: "#224c99",

@@ -9,6 +9,7 @@ import {
   ensurePermissionsFresh,
   hasMenuPermission,
 } from "./checkPermission.js";
+import { isSuperAdminSession } from "./superAdmin.js";
 
 /**
  * Per-page permission for the CMS writes, replacing the single
@@ -36,7 +37,14 @@ import {
  * deploy BEFORE scripts/seedCmsMenus.js has run — an unseeded /cms/* row is
  * simply not found, and the fallback carries every request exactly as today.
  *
- * ADMIN bypasses entirely, identically to checkPermission.
+ * THE SUPER ADMIN bypasses entirely, identically to checkPermission — and
+ * identically to checkPermission, that is `isSuperAdmin`, NOT `role ===
+ * "ADMIN"`. This gate is the one that matters most for the change: the whole
+ * point of the owner's model is that the CMS is theirs alone and is never
+ * granted to a branch. While this bypassed on the role string, creating a
+ * second CompanyMaster admin for a branch handed that branch the entire website
+ * — every page, every collection — because /cms/* is granted to nobody and the
+ * bypass meant nobody needed a grant.
  *
  * ALWAYS READS req.session.user. req.user is built by authMiddleware from four
  * fields (id, role, email, name) and carries no permissions whatsoever, so code
@@ -196,9 +204,10 @@ export const siteItemDocTargets = async (req) => {
 export const cmsPermission = (action, resolveTargets) => {
   return async (req, res, next) => {
     try {
-      // ADMIN always has full access — identical to checkPermission, and the
-      // reason the owner never needs a single grant seeded.
-      if (req.session?.user?.role === "ADMIN") {
+      // The super admin always has full access — identical to checkPermission,
+      // and the reason the owner never needs a single CMS grant seeded. A
+      // branch admin is NOT a super admin and falls through to the checks.
+      if (isSuperAdminSession(req)) {
         return next();
       }
 

@@ -140,10 +140,20 @@ const staff = (grants, { body = {}, params = {} } = {}) => ({
   headers: {},
 });
 
-/** A super admin. */
+/**
+ * A super admin.
+ *
+ * `isSuperAdmin: true` is the field the gates actually read — NOT `role`. The
+ * role string says only which table the account lives in ("ADMIN" =
+ * CompanyMaster), and a branch-level CompanyMaster admin carries the same role
+ * with isSuperAdmin: false. See middlewares/superAdmin.js, and
+ * scripts/tests/superAdminGate.test.mjs for the branch-admin half of this.
+ */
 const superAdmin = (opts = {}) => ({
   ...staff({}, opts),
-  session: { user: { id: "owner", role: "ADMIN", name: "Owner" } },
+  session: {
+    user: { id: "owner", role: "ADMIN", name: "Owner", isSuperAdmin: true },
+  },
 });
 
 /** Minimal res double capturing the terminal status and payload. */
@@ -324,7 +334,7 @@ test("a super admin bypasses entirely — no menu is even resolved", async () =>
   assert.deepEqual(
     result.lookedUp,
     [],
-    "the ADMIN short-circuit must happen before any lookup, as checkPermission does",
+    "the super-admin short-circuit must happen before any lookup, as checkPermission does",
   );
 });
 
@@ -678,7 +688,7 @@ test("permissions are read from req.session.user, never from req.user", async ()
 // admin panel surfaces to the user — are pinned here.
 // ===================================================================
 
-test("checkPermission: ADMIN bypasses before any lookup", async () => {
+test("checkPermission: the super admin bypasses before any lookup", async () => {
   const result = await run(checkPermission("/employee", "delete"), superAdmin());
   assert.equal(result.passed, true);
   assert.deepEqual(result.lookedUp, []);

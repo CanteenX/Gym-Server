@@ -111,7 +111,8 @@ export const seedWebsiteMenus = async () => {
   // 3. Role grants are OPT-IN, and deliberately not the default.
   //
   //    The menu rows above are sufficient for the owner: checkPermission
-  //    returns next() immediately for role === "ADMIN", PermissionProtected
+  //    returns next() immediately for the SUPER ADMIN (isSuperAdmin, not the
+  //    role string — a branch admin is refused these), PermissionProtected
   //    short-circuits on isAdmin, and getMenuByGroups returns every active menu
   //    without filtering on permissions. So a super admin can see and use these
   //    screens the moment the rows exist.

@@ -93,12 +93,26 @@ const deleteFileIfExists = (filePath) => {
   }
 };
 
-const getEmployeePermissions = async (employee) => {
+/**
+ * The permission snapshot for ANY staff account that carries a roleId.
+ *
+ * Named for Employee because that is the only table that had a roleId when it
+ * was written, but the lookup is by roleId alone and nothing in it is
+ * Employee-specific. CompanyMaster now carries an optional roleId too (see
+ * models/CompanyMaster.js), because a branch-level CompanyMaster admin is no
+ * longer waved through by the permission gate and therefore needs a real grant
+ * set like everybody else. An account with no roleId gets an empty snapshot,
+ * exactly as before.
+ */
+const getEmployeePermissions = async (account) => {
   let permissions = [];
   let permissionsUpdatedAt = null;
 
+  const roleId = account?.roleId?._id || account?.roleId;
+  if (!roleId) return { permissions, permissionsUpdatedAt };
+
   const employeeRole = await EmployeeRoles.findOne({
-    roleId: employee.roleId?._id || employee.roleId,
+    roleId,
     isActive: true,
   });
 
@@ -367,23 +381,44 @@ export const loginCompany = async (req, res) => {
       dataToSend.loginBanner = employeeCompany.loginBanner;
     }
 
+    /**
+     * Permissions are loaded for WHOEVER JUST AUTHENTICATED, keyed on their
+     * roleId — not for `role === "EMPLOYEE"` only.
+     *
+     * While the permission gate bypassed on the role string, a CompanyMaster
+     * login needed no grants and this correctly skipped the lookup. Now that
+     * only a super admin bypasses, a branch-level CompanyMaster admin is
+     * subject to the same checks as everyone else, and loading nothing for them
+     * would 403 every gated screen with "No permissions found for this role" —
+     * a total lockout dressed up as a permissions message. Keyed on the
+     * authenticated user, so an account with no roleId still gets an empty
+     * snapshot and nothing changes for it.
+     */
     let permissions = [];
     let permissionsUpdatedAt = null;
 
-    if (role === "EMPLOYEE") {
-      ({ permissions, permissionsUpdatedAt } =
-        await getEmployeePermissions(employee));
-    }
+    ({ permissions, permissionsUpdatedAt } =
+      await getEmployeePermissions(user));
 
     req.session.user = {
       id: userId.toString(),
       role,
       email: user.email || user.emailOffice,
       name: user.companyName || user.employeeName,
+      /**
+       * From the AUTHENTICATED user, not from `employee`.
+       *
+       * findUserByEmail() looks BOTH tables up and returns both hits;
+       * resolveUserRole() then picks one as the account that actually logged
+       * in. Reading `employee?.…` here ignored that decision: when a
+       * CompanyMaster and an Employee happen to share an address, the
+       * CompanyMaster authenticates but the session was stamped with the
+       * Employee's roleId, branch and super-admin flag. That is one account
+       * silently wearing another's privileges, and it could only ever be found
+       * by someone re-reading this function.
+       */
       roleId:
-        employee?.roleId?._id?.toString() ||
-        employee?.roleId?.toString() ||
-        null,
+        user?.roleId?._id?.toString() || user?.roleId?.toString() || null,
       permissions,
       permissionsUpdatedAt,
       /**
@@ -396,10 +431,16 @@ export const loginCompany = async (req, res) => {
        * therefore logged in as an ordinary user: the checkbox that grants the
        * flag is itself gated on having the flag, so ticking it achieved
        * nothing and the account could never administer anything.
+       *
+       * `user` is whichever table authenticated, so BOTH sources are covered by
+       * one read and neither table can lend its flag to the other. This field
+       * is now the ONLY thing standing between a branch admin and the whole
+       * system — checkPermission and cmsPermission bypass on it — so a false
+       * negative locks the owner out and a false positive hands a branch the
+       * CMS. `=== true`, never truthiness: absent is a third state, resolved in
+       * middlewares/superAdmin.js, not guessed at here.
        */
-      isSuperAdmin: Boolean(
-        companyMaster?.isSuperAdmin || employee?.isSuperAdmin,
-      ),
+      isSuperAdmin: user?.isSuperAdmin === true,
       /**
        * The branch this session is scoped to; null means all branches.
        *
@@ -407,7 +448,7 @@ export const loginCompany = async (req, res) => {
        * undefined for everyone and concludes "no restriction" — handing every
        * branch admin both branches, silently and with nothing logged.
        */
-      branch: employee?.branch ?? null,
+      branch: user?.branch ?? null,
     };
 
     return res.status(200).json({

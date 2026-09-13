@@ -7,8 +7,9 @@
  * not a fallback.
  *
  * The failure is asymmetric and therefore easy to miss: checkPermission returns
- * next() immediately for role === "ADMIN", so the owner sees a working screen
- * while every employee gets 403 on the same one. Run the seed.
+ * next() immediately for the SUPER ADMIN (isSuperAdmin, not the role string —
+ * see middlewares/superAdmin.js), so the owner sees a working screen while
+ * every employee AND every branch admin gets 403 on the same one. Run the seed.
  *
  * ONE ROW, NOT TWO. The class diary and the roster are the same screen doing
  * the same job for the same person, so bookings are governed by
@@ -142,7 +143,7 @@ export const seedClassMenus = async () => {
    * 3. Role grants are OPT-IN, and deliberately not the default.
    *
    *    The row above is enough for the owner: checkPermission short-circuits
-   *    for role === "ADMIN", PermissionProtected short-circuits on isAdmin, and
+   *    for the super admin, PermissionProtected short-circuits on isAdmin, and
    *    getMenuByGroups returns every active menu without filtering on
    *    permissions. A super admin can use the screen the moment the row exists.
    *

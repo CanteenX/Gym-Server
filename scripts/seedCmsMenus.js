@@ -164,7 +164,9 @@ export const seedCmsMenus = async () => {
    * 3. Role grants are OPT-IN, and deliberately not the default.
    *
    *    The rows above are enough for the owner: cmsPermission and
-   *    checkPermission both return next() immediately for role === "ADMIN",
+   *    checkPermission both return next() immediately for the SUPER ADMIN
+   *    (isSuperAdmin, NOT the role string — a branch-level CompanyMaster admin
+   *    also has role "ADMIN" and is deliberately refused the CMS),
    *    PermissionProtected short-circuits on isAdmin, and getMenuByGroups
    *    returns every active menu without filtering on permissions. A super
    *    admin can use every screen the moment the rows exist.

@@ -1,5 +1,6 @@
 import MenuMaster from "../models/MenuMaster.js";
 import EmployeeRoles from "../models/EmployeeRoles.js";
+import { isSuperAdminSession } from "./superAdmin.js";
 
 /**
  * Check if session permissions are stale by comparing updatedAt timestamps
@@ -143,7 +144,21 @@ export const hasMenuPermission = async (req, menuUrl, action) => {
  * Usage: checkPermission("/employee", "read")
  *        checkPermission("/department", "write")
  *        checkPermission("/role-master", "delete")
- * ADMIN role always bypasses permission check
+ *
+ * THE SUPER ADMIN — and ONLY the super admin — bypasses the check.
+ *
+ * This gate used to short-circuit on `role === "ADMIN"`, which is a statement
+ * about which table the account lives in, not about how much it may do. Every
+ * branch-level CompanyMaster admin (isSuperAdmin: false) therefore bypassed the
+ * entire RBAC system — the CMS, the SEO manager, the audit log, all of it —
+ * without anyone granting them a thing, and with nothing logged. It now reads
+ * isSuperAdminSession(), so a branch admin is subject to their EmployeeRoles
+ * grants exactly like an employee, and the owner decides per menu how much of
+ * the system each branch gets. See middlewares/superAdmin.js for the full
+ * reasoning, including what happens to sessions created before that change.
+ *
+ * A menu granted to nobody is therefore super-admin-only automatically. That is
+ * the mechanism, not a side effect: CMS, SEO and the audit log stay ungranted.
  *
  * For the CMS routes, which must check the permission of the PAGE being edited
  * rather than one fixed URL, see middlewares/cmsPermission.js — it is built on
@@ -152,8 +167,9 @@ export const hasMenuPermission = async (req, menuUrl, action) => {
 export const checkPermission = (menuUrl, action) => {
   return async (req, res, next) => {
     try {
-      // ADMIN always has full access
-      if (req.session?.user?.role === "ADMIN") {
+      // The super admin always has full access. NOT `role === "ADMIN"` — see
+      // the doc comment above and middlewares/superAdmin.js.
+      if (isSuperAdminSession(req)) {
         return next();
       }
 

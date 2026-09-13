@@ -27,6 +27,8 @@
  * this module exists to prevent. Client-supplied branch params may narrow a
  * super admin's view, but must never widen a branch admin's.
  */
+import { isSuperAdminSession } from "./superAdmin.js";
+
 
 /**
  * The branch this request is limited to, or null for unrestricted (super admin).
@@ -38,7 +40,7 @@
 export const scopedBranch = (req) => {
   const sessionUser = req.session?.user;
   if (!sessionUser) return null;
-  if (sessionUser.isSuperAdmin) return null;
+  if (isSuperAdminSession(req)) return null;
   return sessionUser.branch || null;
 };
 
@@ -60,8 +62,22 @@ export const scopeFilter = (req) => {
 
 /**
  * True when the session belongs to someone with full cross-branch access.
+ *
+ * KEPT AS AN EXPORT, BUT NO LONGER AN INDEPENDENT IMPLEMENTATION. It now
+ * delegates to isSuperAdminSession() in middlewares/superAdmin.js so that
+ * "is this the super admin?" has exactly one answer in this codebase. There
+ * used to be three spellings of it — this one (`Boolean(...)`),
+ * requireSuperAdmin's (`!req.session.user.isSuperAdmin`) and the permission
+ * gates' (`role === "ADMIN"`, which was a different question entirely) — and
+ * the third one disagreed with the other two, which is how a branch admin came
+ * to be correctly scoped to one branch's DATA while bypassing every permission
+ * check in the system.
+ *
+ * The behaviour change from `Boolean(...)` to `=== true` is deliberate: absent
+ * is not the same as false, and authMiddleware resolves absent to a real
+ * boolean before any of this runs.
  */
-export const isSuperAdmin = (req) => Boolean(req.session?.user?.isSuperAdmin);
+export const isSuperAdmin = (req) => isSuperAdminSession(req);
 
 /**
  * Resolves the branch a LIST endpoint should filter on, honouring a
