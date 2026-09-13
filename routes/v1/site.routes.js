@@ -1,6 +1,15 @@
 import express from "express";
 import { authMiddleware } from "../../middlewares/authMiddleware.js";
 import { checkPermission } from "../../middlewares/checkPermission.js";
+import {
+  cmsPermission,
+  siteContentListTargets,
+  siteContentCreateTargets,
+  siteContentDocTargets,
+  siteItemListTargets,
+  siteItemCreateTargets,
+  siteItemDocTargets,
+} from "../../middlewares/cmsPermission.js";
 import { authRateLimiter, uploadRateLimiter } from "../../middlewares/rateLimiter.js";
 import { createLeadValidation } from "../../middlewares/inputValidator.js";
 import { createSecureImageUpload } from "../../middlewares/secureUpload.js";
@@ -59,11 +68,15 @@ const router = express.Router();
  *     the marketing site renders from (copy, list items, adverts, SEO
  *     metadata), and the contact form POST. They are the only unauthenticated
  *     endpoints here and each is commented individually.
- *   - EVERY write is behind a staff session AND checkPermission. Unlike the
- *     older gym routes (members/trainers/transactions), checkPermission IS
- *     applied here, because the four MenuMaster rows it resolves are seeded by
- *     scripts/seedWebsiteMenus.js. Run that seed before deploying, or every
- *     admin write 403s with "Menu '/website-pages' not found".
+ *   - EVERY write is behind a staff session AND a permission check. Unlike the
+ *     older gym routes (members/trainers/transactions), permissions ARE
+ *     applied here, because the MenuMaster rows they resolve are seeded by
+ *     scripts/seedWebsiteMenus.js and scripts/seedCmsMenus.js. Run those seeds
+ *     before deploying, or every admin write 403s.
+ *   - The CMS routes (SiteContent, SiteItem) use cmsPermission, NOT
+ *     checkPermission: they check the permission of the PAGE being edited
+ *     (/cms/faqs, /cms/pricing, …) with /website-pages as the "all CMS pages"
+ *     grant. Adverts, leads and SEO keep their single fixed permission.
  */
 
 // ============ SECURE FILE UPLOAD CONFIGURATION ============
@@ -277,24 +290,36 @@ router.get("/site/seo", getPublicSeoMeta);
  */
 router.post("/site/leads", authRateLimiter, createLeadValidation, createPublicLead);
 
-// ============ ADMIN — SITE CONTENT (/website-pages) ============
+// ============ ADMIN — SITE CONTENT (/cms/<page>, /website-pages) ============
 
+/**
+ * PERMISSION FOLLOWS THE PAGE. Each of these resolves the menu row for the
+ * pageKey the request actually touches — /cms/home, /cms/faqs, /cms/footer —
+ * and falls back to /website-pages, which is now the "all CMS pages" grant.
+ * The mapping lives in config/cmsMenus.js, which is also what
+ * scripts/seedCmsMenus.js builds the sidebar from, so the row the admin panel
+ * gates the SCREEN on and the row the server gates the SAVE on cannot drift.
+ *
+ * On the `:id` routes the pageKey is not in the request, so the middleware
+ * reads the row first — one extra projected findById on a write path, spelled
+ * out in middlewares/cmsPermission.js.
+ */
 router.post(
   "/site/content-by-params",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "read"),
+  cmsPermission("read", siteContentListTargets),
   listSiteContentByParams,
 );
 router.post(
   "/site/content",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "write"),
+  cmsPermission("write", siteContentCreateTargets),
   createSiteContent,
 );
 router.put(
   "/site/content/:id",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "edit"),
+  cmsPermission("edit", siteContentDocTargets),
   updateSiteContent,
 );
 /**
@@ -306,7 +331,7 @@ router.put(
 router.post(
   "/site/content/:id/image",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "edit"),
+  cmsPermission("edit", siteContentDocTargets),
   uploadRateLimiter,
   secureContentImageUpload,
   uploadSiteContentImage,
@@ -314,44 +339,53 @@ router.post(
 router.delete(
   "/site/content/:id",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "delete"),
+  cmsPermission("delete", siteContentDocTargets),
   deleteSiteContent,
 );
 
-// ============ ADMIN — SITE ITEMS (/website-pages, deliberately shared) ============
+// ============ ADMIN — SITE ITEMS (/cms/<list>, /website-pages) ============
 
 /**
- * NO FIFTH MENU ROW: these reuse /website-pages rather than getting a
- * /website-items of their own.
+ * SUPERSEDES the earlier "NO FIFTH MENU ROW" decision, and says why.
  *
- * Editing the six programme cards is the same job, done by the same person,
- * with the same blast radius as editing the hero copy above them — it is all
- * "the words and pictures on the public site". /seo-manager is split out
- * because a wrong canonical URL de-indexes a page, a failure no amount of
- * proofreading can cause; there is no equivalent asymmetry here. A fifth
- * Website screen would also mean a fifth row to seed, a fifth permission to
- * grant per role, and a staff member who can edit the hero but mysteriously
- * not the cards under it.
+ * These used to share one /website-pages permission with the page copy above,
+ * on the argument that editing the six programme cards is the same job with the
+ * same blast radius as editing the hero above them. That held while there was
+ * one CMS screen. The sidebar now lists a screen per page, and the owner's
+ * reason for wanting that is precisely the distinction the old decision denied:
+ * letting somebody maintain the FAQ list without also handing them the pricing
+ * table. So each list resolves its own menu — /cms/faqs, /cms/pricing,
+ * /cms/trainers … — via config/cmsMenus.js.
  *
- * Practical consequence: scripts/seedWebsiteMenus.js needs no change for this
- * phase, and anyone who can already edit page copy can already edit these.
+ * Nothing that works today stops working: /website-pages remains a valid grant
+ * and now means "all CMS pages", so every existing role keeps exactly the
+ * access it has, including before scripts/seedCmsMenus.js has been run.
+ *
+ * Note `plans` maps to /cms/pricing (the records are "plans", the screen is
+ * "Pricing"), and `transformations` has no screen of its own, so it resolves to
+ * the /website-pages fallback — i.e. unchanged behaviour.
  */
 router.post(
   "/site/items-by-params",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "read"),
+  cmsPermission("read", siteItemListTargets),
   listSiteItemsByParams,
 );
 router.post(
   "/site/items",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "write"),
+  cmsPermission("write", siteItemCreateTargets),
   createSiteItem,
 );
+/**
+ * A row may be MOVED between collections here (updateSiteItem supports it), so
+ * the middleware requires `edit` on BOTH the list it is leaving and the list it
+ * is joining. Without that, "edit a FAQ" would be a way to write into `plans`.
+ */
 router.put(
   "/site/items/:id",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "edit"),
+  cmsPermission("edit", siteItemDocTargets),
   updateSiteItem,
 );
 /**
@@ -365,7 +399,7 @@ router.put(
 router.post(
   "/site/items/:id/image",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "edit"),
+  cmsPermission("edit", siteItemDocTargets),
   uploadRateLimiter,
   secureItemImageUpload,
   uploadSiteItemImage,
@@ -373,7 +407,7 @@ router.post(
 router.delete(
   "/site/items/:id",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/website-pages", "delete"),
+  cmsPermission("delete", siteItemDocTargets),
   deleteSiteItem,
 );
 

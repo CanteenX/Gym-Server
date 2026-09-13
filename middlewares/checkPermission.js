@@ -63,11 +63,91 @@ const refreshPermissions = async (req) => {
 };
 
 /**
+ * Makes sure `req.session.user.permissions` is present and current, loading or
+ * refreshing it from EmployeeRoles when it is not.
+ *
+ * EXTRACTED so that a middleware which has to check MORE THAN ONE menu on a
+ * single request (middlewares/cmsPermission.js checks the page being edited and
+ * then the all-pages fallback) pays for the staleness round-trip ONCE rather
+ * than once per menu. Behaviour is unchanged for checkPermission below: the
+ * same three outcomes, in the same order, with the same messages.
+ *
+ * ALWAYS READS req.session.user, never req.user — authMiddleware builds req.user
+ * from four fields only and it carries no permissions at all.
+ *
+ * @param {import("express").Request} req
+ * @returns {Promise<{ok: true} | {ok: false, status: number, message: string}>}
+ */
+export const ensurePermissionsFresh = async (req) => {
+  const sessionUser = req.session?.user;
+
+  if (!sessionUser) {
+    return { ok: false, status: 401, message: "Not logged in" };
+  }
+
+  // If no permissions in session — load from DB
+  if (!sessionUser.permissions || sessionUser.permissions.length === 0) {
+    const refreshed = await refreshPermissions(req);
+    if (!refreshed) {
+      return {
+        ok: false,
+        status: 403,
+        message: "No permissions found for this role",
+      };
+    }
+  } else {
+    // Permissions exist — check if stale
+    const stale = await isPermissionStale(sessionUser);
+    if (stale) {
+      await refreshPermissions(req);
+    }
+  }
+
+  return { ok: true };
+};
+
+/**
+ * Resolves a menu BY URL and answers whether the session holds `action` on it.
+ *
+ * Assumes ensurePermissionsFresh() has already run — it does no loading of its
+ * own, which is what makes it cheap to call twice in one request.
+ *
+ * The two negative answers are kept DISTINCT rather than collapsed to a
+ * boolean, because they mean completely different things operationally:
+ * `menuFound: false` is "the seed has not been run" (an ops problem, and the
+ * reason every seed script in this repo carries a NOT OPTIONAL banner), while
+ * `allowed: false` is "this role was not granted it" (a permissions problem).
+ * Collapsing them is how a missing seed row gets diagnosed for an hour as a
+ * permissions bug.
+ *
+ * @param {import("express").Request} req
+ * @param {string} menuUrl exact MenuMaster.menuUrl
+ * @param {string} action read | write | edit | delete | print | mail
+ * @returns {Promise<{menuFound: boolean, allowed: boolean}>}
+ */
+export const hasMenuPermission = async (req, menuUrl, action) => {
+  const menu = await MenuMaster.findOne({ menuUrl, isActive: true }).lean();
+
+  if (!menu) return { menuFound: false, allowed: false };
+
+  const permissions = req.session?.user?.permissions || [];
+  const menuPermission = permissions.find(
+    (p) => p.menuId === menu._id.toString(),
+  );
+
+  return { menuFound: true, allowed: Boolean(menuPermission?.[action]) };
+};
+
+/**
  * Permission middleware
  * Usage: checkPermission("/employee", "read")
  *        checkPermission("/department", "write")
  *        checkPermission("/role-master", "delete")
  * ADMIN role always bypasses permission check
+ *
+ * For the CMS routes, which must check the permission of the PAGE being edited
+ * rather than one fixed URL, see middlewares/cmsPermission.js — it is built on
+ * the two helpers above and shares this function's semantics exactly.
  */
 export const checkPermission = (menuUrl, action) => {
   return async (req, res, next) => {
@@ -77,41 +157,22 @@ export const checkPermission = (menuUrl, action) => {
         return next();
       }
 
-      const sessionUser = req.session?.user;
-
-      if (!sessionUser) {
-        return res.status(401).json({
+      const fresh = await ensurePermissionsFresh(req);
+      if (!fresh.ok) {
+        return res.status(fresh.status).json({
           isOk: false,
-          message: "Not logged in",
-          status: 401,
+          message: fresh.message,
+          status: fresh.status,
         });
       }
 
-      // If no permissions in session — load from DB
-      if (!sessionUser.permissions || sessionUser.permissions.length === 0) {
-        const refreshed = await refreshPermissions(req);
-        if (!refreshed) {
-          return res.status(403).json({
-            isOk: false,
-            message: "No permissions found for this role",
-            status: 403,
-          });
-        }
-      } else {
-        // Permissions exist — check if stale
-        const stale = await isPermissionStale(sessionUser);
-        if (stale) {
-          await refreshPermissions(req);
-        }
-      }
-
-      // Find the menu in DB by menuUrl passed directly
-      const menu = await MenuMaster.findOne({
+      const { menuFound, allowed } = await hasMenuPermission(
+        req,
         menuUrl,
-        isActive: true,
-      }).lean();
+        action,
+      );
 
-      if (!menu) {
+      if (!menuFound) {
         return res.status(403).json({
           isOk: false,
           message: `Menu '${menuUrl}' not found`,
@@ -119,13 +180,7 @@ export const checkPermission = (menuUrl, action) => {
         });
       }
 
-      // Check permission for this menu
-      const permissions = req.session.user.permissions || [];
-      const menuPermission = permissions.find(
-        (p) => p.menuId === menu._id.toString(),
-      );
-
-      if (!menuPermission?.[action]) {
+      if (!allowed) {
         return res.status(403).json({
           isOk: false,
           message: `Access denied — no '${action}' permission for this module`,

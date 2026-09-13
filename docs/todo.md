@@ -369,24 +369,50 @@ row carrying a query string matches nothing, resolves to no `menuId`, and
 `PermissionProtected` denies the route outright. Verified by reading
 `src/context/MenuContext.jsx:409-458`.
 
+**Server half — DONE** (admin and frontend halves are separate work).
+
 - [ ] Routes `/cms/home`, `/cms/about`, `/cms/programs`, `/cms/pricing`,
-      `/cms/faqs`, `/cms/trainers`, `/cms/testimonials`, `/cms/contact`,
-      `/cms/header`, `/cms/footer`, `/cms/social` — each rendering the existing
-      editor scoped to its own `pageKey` or `collectionKey`
-- [ ] A "CMS" `MenuGroupMaster` with a row per page, using `parentMenu` for the
-      submenu levels the reference has (`MenuMaster` already self-references)
-- [ ] **Server permission must follow.** SiteContent/SiteItem routes currently
-      check `checkPermission("/website-pages", …)`. With per-page menu rows a
-      non-super-admin granted only `/cms/faqs` would pass the client check and
-      then 403 on save. Either map the CMS routes to the matching menu, or keep
-      a single CMS permission and say so — do not leave client and server
-      disagreeing
-- [ ] Header, Footer and Social & Media have no model yet. Header/footer are
-      `SiteContent` rows with new `pageKey`s; Social & Media is currently
-      hardcoded in `Gym-frontend/src/lib/site.ts` (`site.instagram`) and needs
-      either a `SiteContent` section or a small settings collection
-- [ ] Keep `/website-pages` working, or redirect it — it is seeded, permissioned
-      and linked from existing empty-state copy
+      `/cms/faqs`, `/cms/trainers`, `/cms/testimonials`, `/cms/classes`,
+      `/cms/contact`, `/cms/header`, `/cms/footer`, `/cms/social` — each
+      rendering the existing editor scoped to its own `pageKey` or
+      `collectionKey`. **Admin panel work, not started here.**
+- [x] A "CMS" `MenuGroupMaster` with a row per page — `config/cmsMenus.js` holds
+      the tree, `scripts/seedCmsMenus.js` creates it. Thirteen rows: nine
+      top-level plus a `Content Management` parent (`menuUrl: "#"`,
+      `isParent: true`) carrying the six repeating lists via `parentMenu`.
+      Idempotent; `--grant-all` stays opt-in and grants read/write/edit, never
+      delete
+- [x] **Server permission follows the page.** `middlewares/cmsPermission.js`
+      derives the menu URL from the `pageKey`/`collectionKey` the request
+      actually touches and checks that. On PUT/DELETE/image the key is not in
+      the request, so the row is loaded first — one projected `findById` on a
+      write path, commented as such. A move (`pageKey`/`collectionKey` changed
+      in the body) requires the permission for **both** ends, or "edit a FAQ"
+      would be a way to write into `plans`
+- [x] `/website-pages` is **kept and redefined as the "all CMS pages" grant** —
+      checked as a fallback on every CMS write, so every role that works today
+      keeps working, including in the window before `seed:cms-menus` is run (an
+      unseeded `/cms/*` row simply does not resolve and the fallback carries the
+      request). Adverts, leads and SEO Manager keep their own fixed permissions
+- [x] Header, Footer and Social & Media given a home: `SiteContent` rows under
+      new `pageKey`s `header` (brand, cta), `footer` (brand, explore, branches,
+      legal) and `social` (one row per network). Social is `SiteContent` rather
+      than a `SiteItem` list **because the footer addresses a network by name**
+      and `SiteItem` has no unique index, so it would happily hold two Instagram
+      rows. Only Instagram has real values; facebook/youtube/whatsapp are seeded
+      blank and `isActive: false` because no such account exists anywhere in the
+      repo and none was invented
+- [x] `scripts/tests/cmsPermission.test.mjs` — 37 offline tests, no DB. Proves
+      editing `faqs` checks `/cms/faqs` and never `/cms/pricing`, that a super
+      admin bypasses before any lookup, that a move needs both ends, and pins
+      `checkPermission`'s four outcomes after its refactor. `npm run test:unit`
+      **122/122**
+- [ ] Nothing on the frontend reads `header`/`footer`/`social` yet, so editing
+      those three screens changes nothing on the live site until the frontend is
+      wired to them. Nav links stay in `src/lib/site.ts` — they are a repeating
+      list and want a `SiteItem` collection, not `header/link-1…n`
+- [ ] `transformations` has no `/cms/*` screen (it was not in the twelve
+      requested routes), so it still resolves to `/website-pages`
 
 Upside worth having: per-page permissions become possible, so a staff member
 can be allowed to edit FAQs without being able to touch pricing.
