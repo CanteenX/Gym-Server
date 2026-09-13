@@ -26,7 +26,23 @@ const branchAssignmentError = (req, { branch, isSuperAdmin: wantsSuperAdmin }) =
   if (isSuperAdmin(req)) return null;
 
   const own = scopedBranch(req);
-  if (!own) return null;
+  /**
+   * No branch and not a super admin is a MISCONFIGURED account, not a
+   * privileged one — so it must grant less, never more.
+   *
+   * This used to `return null`, which skipped every check below it, including
+   * the super-admin guard six lines down: an account with `branch: null` could
+   * therefore create a super admin and hand itself the whole system. Exactly
+   * that shape existed in production (`test@gmail.com`, since deactivated),
+   * and `scopedBranch()` already reads a null branch as "all branches"
+   * elsewhere, so the same misconfiguration was widening reads too.
+   */
+  if (!own) {
+    return (
+      "This account is not assigned to a branch, so it cannot create or " +
+      "modify staff. A super admin must assign it a branch first."
+    );
+  }
 
   if (wantsSuperAdmin === true || wantsSuperAdmin === "true") {
     return "You do not have permission to create or modify a super admin account.";
