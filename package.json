@@ -20,7 +20,9 @@
     "seed:branch-roles": "node scripts/seedBranchRolePermissions.js",
     "migrate:attendance-subject": "node scripts/migrateAttendanceSubjectType.js",
     "verify:storage": "node scripts/verifySupabaseStorage.js",
-    "repair:rbac": "node scripts/repairRbac.js"
+    "repair:rbac": "node scripts/repairRbac.js",
+    "audit:integrity": "node scripts/auditIntegrity.js",
+    "seed:currency-menu": "node scripts/seedCurrencyMenu.js"
   },
   "keywords": [],
   "author": "",
