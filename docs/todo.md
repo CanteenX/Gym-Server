@@ -10,14 +10,14 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
 | Phase | Code | Gate | Live |
 |---|---|---|---|
-| 0 — deployment split | done | passed | **blocked** |
-| 6 — login page | done | passed | blocked |
-| 1 — CMS, adverts, leads | done | passed | blocked |
-| 1b — repeatable CMS content | done | passed | blocked |
-| 2 — SEO + SEO Manager | done | passed | blocked |
-| 4 — attendance, reports, audit | done | passed | blocked |
-| 3 — QR check-in + trainer login | done* | passed | blocked |
-| 5 — booking + reminders | done | passed | ready |
+| 0 — deployment split | done | passed | **live** |
+| 6 — login page | done | passed | live |
+| 1 — CMS, adverts, leads | done | passed | live |
+| 1b — repeatable CMS content | done | passed | live |
+| 2 — SEO + SEO Manager | done | passed | live |
+| 4 — attendance, reports, audit | done | passed | live |
+| 3 — QR check-in + trainer login | done* | passed | live |
+| 5 — booking + reminders | done | passed | live |
 
 \* three items from the original Phase 3 list did not ship — see the section
 after Phase 3.
@@ -107,7 +107,7 @@ Harness
 - [x] Browser (local build, `--base http://localhost:3000`): **GATE PASSED**, 33 checks, 0 failures — staff login 1086 ms, `sessionId` httpOnly/sameSite=Lax set through the rewrite, `/admin` and `/admin/` both mount, menus load, 1440 + 390 px screenshots
 - [x] Browser: zero page errors across 3 marketing + 9 admin routes; unnamed form controls 0; nameless buttons 0; no overflow at 390 px
 - [x] Gate re-run after the review fixes: **GATE PASSED**, 34 checks, exit 0. The overflow detector was proved to have teeth (injected 900px element → detected; wide content inside `overflow-x:auto` → correctly ignored)
-- [ ] **Live smoke green on public domain** — BLOCKED: production deploy not yet run
+- [x] Live smoke green on public domain — deployed 2026-09-13
 - [ ] `/menus/by-groups` and `/auth/me` still ≈ 250 ms (bom1 colocation intact) — measure after the live deploy
 - [ ] **Confirm the recorded login IP is the visitor's**, not Vercel infrastructure. Log in on the live site, then read the newest `LoginAttempt.ipAddress`. `x-forwarded-for[0]` is the best signal available in-process, but whether the API's edge preserves or overwrites that header across the proxy hop could not be determined without the live topology. If it comes back as infrastructure, the fix is for the front end to forward the original explicitly in a custom header
 
@@ -135,7 +135,7 @@ Pre-existing defects found by the new gate and fixed here (not introduced by Pha
 - [x] Browser: **GATE PASSED** (34 checks). Enter-to-login works (1343 ms), `sessionId` httpOnly set, 0 page errors, no overflow at 1440 or 390 px, screenshots captured
 - [x] Contrast measured against **both** gradient ends: worst new pair 8.52:1 against a 4.5 requirement; headline 11.85–15.97:1
 - [x] Claim checked and rejected: the subagent reported `.text-muted` at 3.43:1, but `custom.scss` already overrides it to `#6b7280` — measured **4.83:1**, passing. No change needed
-- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+- [x] Live smoke — deployed; CI smoke step green on the public domain
 
 ---
 
@@ -172,7 +172,7 @@ Frontend
 - [x] **Full stack run locally** (Express + Next + admin SPA): create → **live on the prerendered page immediately**; update → propagates; delete → removed and fallback copy restored. All via `curl` with no JS executed, which is the SEO property that matters
 - [x] Browser: **GATE PASSED**, 37 checks, exit 0, including the three new screens — 0 unnamed controls, 0 nameless buttons, 0 zero-width icons, no overflow at 390 px
 - [x] Spam attempt rejected (verified above)
-- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+- [x] Live smoke — deployed; CI smoke step green on the public domain
 
 Known gaps carried forward (not defects, decisions needed):
 - [ ] Repeating content — the six programme cards, timetable, trainers, pricing, FAQs, testimonials — is still hardcoded in `src/lib/site.ts`. `SiteContent`'s flat shape cannot express structured records. Needs either a repeatable-items model or a `program-1…n` + `sortOrder` convention
@@ -211,7 +211,7 @@ Manager
 - [x] Fixed a **client/server contract mismatch**: the editor accepted a `localhost` canonical that the server rejects, so every save in local dev would have 400'd on a field the editor never touched
 - [x] Fixed a **clipped destructive action**: the SEO table ran 58 px past its scroll container at 1440 px, hiding *Delete*. The gate missed it — it only checks clipping at 390 px and the table is inside `.table-responsive`. Actions are icon-only now with aria-labels naming their page
 - [x] Two pre-existing bugs fixed in passing: portal title shipped as `Member Portal · Mid City Gym · Mid City Gym`; portal had no `robots: noindex`
-- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+- [x] Live smoke — deployed; CI smoke step green on the public domain
 
 Open item for the owner:
 - [ ] **Two postal addresses and map pins.** `streetAddress`, `postalCode` and `geo` are omitted from the JSON-LD because they exist nowhere — the `Branch` documents hold `address: ""` for both gyms. Nothing was invented. `Branch.streetAddress`/`postalCode`/`geo` in `src/lib/site.ts` are typed and documented; filling them emits the keys with no other change
@@ -225,8 +225,8 @@ Open item for the owner:
 - [x] `fields` is `Mixed`, not a Mongoose `Map`: a Map read through `.lean()` serialises to `{}`, and the public read *is* `.lean()`, so every row's extras would blank in production while passing any test that skipped it
 - [x] `fields` validated against a per-collection allowlist — a typo like `pirce` is a 400 naming the key, not a silently blank price
 - [x] `classes` flattened from a positional grid to 24 one-per-cell rows, keyed on `(collection, title, day, time)` because "Zumba" is five separate cells
-- [ ] Admin editor screen — in progress
-- [ ] Frontend switchover — in progress. Until it lands the site still renders the hardcoded copy
+- [x] Admin editor screen — Content Lists tab in /website-pages
+- [x] Frontend switchover — all seven collections read from the CMS, constants kept as fallback
 
 ---
 
@@ -257,7 +257,7 @@ Commits: `fd68998` (server) · `44abe39` (admin)
 - [x] Code review — every financial claim re-verified against the live DB rather than taken from the report
 - [x] Browser: **GATE PASSED**, 41 checks, all three screens swept
 - [x] Charts carry a table alternative — a canvas is invisible to a screen reader and to the gate
-- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+- [x] Live smoke — deployed; CI smoke step green on the public domain
 
 Carried forward:
 - [ ] When Phase 3 adds `Attendance.subjectType`, these queries must filter on it or trainer shifts will appear in member footfall
@@ -403,21 +403,7 @@ Reminders
       infrastructure. Recommended: the call list now, capturing emails alongside
 
 Reminders
-- [ ] `crons` in `Gym-Server/vercel.json` → `POST /api/v1/jobs/reminders`
-- [ ] Shared-secret check; cron secret in project 2 env only
-- [ ] Cohorts: expiring 7d, expired, payment due (same logic as dashboard)
-- [ ] `ReminderLog`; no double-send
-- [ ] **Dry-run mode first** — log only, send nothing, until the list is inspected and approved
-
-**Tests (required)**
-- [ ] Concurrent bookings cannot exceed capacity
-- [ ] A member in two cohorts receives one email; a second run sends nothing new
-
-**Gate**
-- [ ] Code review
-- [ ] Browser: book the last slot, second attempt refused; admin roster correct; 1440 + 390 px
-- [ ] Dry-run `ReminderLog` reviewed by owner before live sends enabled
-- [ ] Live smoke green
+_(superseded — see the Phase 5 section above, which records what shipped.)_
 
 ---
 
