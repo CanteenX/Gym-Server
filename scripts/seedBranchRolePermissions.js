@@ -54,6 +54,28 @@
  * URL and a missing MenuMaster row is a 403 ("Menu '/reports' not found"), not
  * a fallback. If this script reports a menu as missing, run
  * `npm run seed:insights-menus` and/or `npm run seed:class-menus` first.
+ *
+ * SEE ALSO scripts/repairRbac.js (`npm run repair:rbac`), which owns the three
+ * things this script cannot:
+ *
+ *   - THE ROLE ROW ITSELF. This script tops up an EmployeeRoles document but
+ *     never checks that a RoleMaster row exists at its `roleId`. `loginEmployee`
+ *     does `.populate("roleId")`, and populate NULLS a dangling reference — so
+ *     an account whose roleId names no RoleMaster lands a session with
+ *     `roleId: null` and zero permissions, while the sidebar (which reads the
+ *     un-populated id from /auth/me) still shows every screen. All four branch
+ *     accounts were in exactly that state; repairRbac.js creates the missing
+ *     RoleMaster AT THE EXISTING _id, which is the only fix that does not
+ *     re-point a link.
+ *
+ *   - REVOKING. RESERVED_TO_SUPER_ADMIN below is asserted only against the rows
+ *     THIS script adds. A reserved menu ticked on by hand through the Employee
+ *     Roles screen is invisible to that assertion, and /employee-roles and
+ *     /role-master had both been added that way. repairRbac.js removes them.
+ *
+ *   - The `/cms/*` DENY BY PREFIX. The list below is a fixed array; config/
+ *     cmsMenus.js keeps growing, so repairRbac.js matches the prefix instead
+ *     and covers CMS screens seeded after this file was last edited.
  */
 import mongoose from "mongoose";
 import dotenv from "dotenv";

@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import Member from "../../models/Member.js";
 import Trainer from "../../models/Trainer.js";
+import { scopeFilter } from "../../middlewares/branchScope.js";
 
 /**
  * Member portal authentication.
@@ -407,6 +408,19 @@ export const changeMemberPassword = async (req, res) => {
 };
 
 /**
+ * BRANCH SCOPING FOR THE STAFF-SIDE CREDENTIAL ROUTES BELOW.
+ *
+ * These are the sharpest routes in this file. They do not read a member's
+ * data, they set the password that opens that member's portal. Unscoped, a
+ * Vasna admin could set a Gotri member's portal password and then sign in as
+ * them — a cross-branch account takeover, not merely a cross-branch read.
+ *
+ * The member-facing handlers here need none of it: they take identity from the
+ * verified JWT (req.member.id / req.portalUser), never from a path parameter,
+ * so there is no id for a caller to substitute.
+ */
+
+/**
  * Staff-side: set or reset a member's portal password, and optionally give
  * them a custom login ID.
  */
@@ -423,7 +437,7 @@ export const setMemberPassword = async (req, res) => {
       });
     }
 
-    const member = await Member.findById(id);
+    const member = await Member.findOne({ _id: id, ...scopeFilter(req) });
     if (!member) {
       return res
         .status(404)
@@ -477,7 +491,7 @@ export const setMemberPassword = async (req, res) => {
 /** Staff-side: revoke portal access without deleting the member. */
 export const revokeMemberPortalAccess = async (req, res) => {
   try {
-    const member = await Member.findById(req.params.id);
+    const member = await Member.findOne({ _id: req.params.id, ...scopeFilter(req) });
     if (!member) {
       return res
         .status(404)

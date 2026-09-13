@@ -240,7 +240,6 @@ export const TIER_BASELINES = {
     "/attendance-overview": grant("read"),
     "/reports": grant("read", "print"),
     "/employee": grant("read", "write", "edit"),
-    "/department": grant("read"),
     // Documentation, not administration. Both tiers keep it.
     "/guides-gallery": grant("read"),
     "/manage-guides": grant("read", "write", "edit"),

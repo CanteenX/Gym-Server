@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import Trainer from "../../models/Trainer.js";
+import { scopeFilter } from "../../middlewares/branchScope.js";
 
 /**
  * STAFF-SIDE management of a trainer's portal credentials (plan.md D4).
@@ -33,6 +34,11 @@ const fail = (res, status, message) =>
  * a member of staff to reach the trainer, so it is known to somebody else and
  * has to be replaced on first use.
  */
+/**
+ * Scoped like the member credential routes: setting a trainer's portal
+ * password is an account-takeover vector, not a read, so a branch admin must
+ * not reach the other branch's trainers by id.
+ */
 export const setTrainerPassword = async (req, res) => {
   try {
     const { id } = req.params;
@@ -42,7 +48,7 @@ export const setTrainerPassword = async (req, res) => {
       return fail(res, 400, "Password must be at least 6 characters");
     }
 
-    const trainer = await Trainer.findById(id);
+    const trainer = await Trainer.findOne({ _id: id, ...scopeFilter(req) });
     if (!trainer) return fail(res, 404, "Trainer not found");
 
     // A custom login ID must not collide with another trainer's. It is checked
@@ -102,7 +108,7 @@ export const setTrainerPassword = async (req, res) => {
  */
 export const revokeTrainerPortalAccess = async (req, res) => {
   try {
-    const trainer = await Trainer.findById(req.params.id);
+    const trainer = await Trainer.findOne({ _id: req.params.id, ...scopeFilter(req) });
     if (!trainer) return fail(res, 404, "Trainer not found");
 
     trainer.passwordHash = "";

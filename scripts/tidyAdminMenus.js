@@ -53,7 +53,20 @@ const NEW_SA_EMAIL = "nventra@gmail.com";
  * "Faq Master" is a parent with url "#", so it is matched by name explicitly
  * and no other row shares that name.
  */
-const HIDE_URLS = ["/blog-master", "/faq-category", "/faq"];
+/**
+ * /department joins the list on the owner's call.
+ *
+ * The two rows in it were "SuperAdmin" and "Gym Admin" — role names, not
+ * departments, duplicating a concept the Roles screen already owns — and not
+ * one of the four staff was assigned to either, so the Department column on
+ * the Employee screen was blank for every row. Employee.departmentId is
+ * already optional in the schema for exactly this reason: a branch admin is a
+ * login, not an HR record.
+ *
+ * Hidden, not deleted, so a gym that later grows into needing departments gets
+ * them back by flipping one field.
+ */
+const HIDE_URLS = ["/blog-master", "/faq-category", "/faq", "/department"];
 const HIDE_PARENT_NAMES = ["Faq Master"];
 
 await mongoose.connect(process.env.DATABASE);

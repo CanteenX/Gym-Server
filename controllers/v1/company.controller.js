@@ -577,7 +577,30 @@ export const getCurrentUserDetails = async (req, res) => {
 
 export const getAdminList = async (req, res) => {
   try {
-    const admins = await CompanyMasterModels.find({ isSuperAdmin: false })
+    /**
+     * The Active toggle on this screen did nothing.
+     *
+     * This query filtered on isSuperAdmin only, so the Admins tab listed
+     * admin@barodaweb.net - an account deactivated as part of retiring the
+     * developer agency's login - while the tick box beside it said "Active".
+     * A retired account presented as the gym's administrator is worse than an
+     * empty list: it invites someone to trust, edit, or re-enable it.
+     *
+     * `isActive` now comes off the request the way every other list screen in
+     * the panel sends it, defaulting to active-only so the common case is the
+     * safe one. Super admins stay excluded because that is what this tab is -
+     * the non-super-admin company accounts; the super admin is managed from
+     * Company Details, not from a list of itself.
+     */
+    const wantActive =
+      req.query.isActive === undefined && req.body?.isActive === undefined
+        ? true
+        : String(req.query.isActive ?? req.body.isActive) === "true";
+
+    const admins = await CompanyMasterModels.find({
+      isSuperAdmin: false,
+      isActive: wantActive,
+    })
       .select("-password")
       .populate("countryId")
       .populate("stateId")

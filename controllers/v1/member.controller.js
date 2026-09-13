@@ -4,7 +4,11 @@ import Member from "../../models/Member.js";
 import MembershipPlan from "../../models/MembershipPlan.js";
 import { compressToWebP } from "../../middlewares/secureUpload.js";
 import { persistBuffer } from "../../storage/fileStore.js";
-import { scopeFilter, resolveBranchFilter } from "../../middlewares/branchScope.js";
+import {
+  scopeFilter,
+  resolveBranchFilter,
+  scopedBranch,
+} from "../../middlewares/branchScope.js";
 /**
  * The dashboard's cohort definitions moved OUT of this file in Phase 5 so that
  * the reminder cron could read the same ones. Two definitions of "expiring in 7
@@ -210,7 +214,11 @@ export const createMember = async (req, res) => {
       emergencyContactName: emergencyContactName?.trim() || "",
       emergencyContactNumber: emergencyContactNumber?.trim() || "",
       address: address?.trim() || "",
-      branch: branch || "Vasna",
+      // scopedBranch() FIRST: a branch admin's new members land in their own
+      // branch whatever the body says, so they cannot create a record they
+      // would then be unable to see. null for a super admin, who keeps the
+      // existing behaviour of naming the branch.
+      branch: scopedBranch(req) || branch || "Vasna",
       trainerId: trainerId || null,
       planCode: planCode || "MONTHLY",
       startDate: start,
@@ -250,7 +258,27 @@ export const createMember = async (req, res) => {
 export const updateMember = async (req, res) => {
   try {
     const { id } = req.params;
-    const member = await Member.findById(id);
+    /**
+     * BRANCH SCOPE ON A BY-ID LOOKUP — the boundary the list endpoints do not
+     * defend.
+     *
+     * listMembersByParams was scoped from the start, but `findById(id)` was
+     * not, and filtering a list is cosmetic while GET/PUT/DELETE on a raw id
+     * still answers: ids travel in URLs, exports, receipts and screenshots. A
+     * Vasna admin sending a Gotri member's id got the whole record back — and,
+     * worse on this handler, could edit it.
+     *
+     * scopeFilter(req) is spread LAST so it is authoritative over the id. It
+     * reads req.session.user, never req.user (which carries no branch and no
+     * isSuperAdmin — see middlewares/branchScope.js). It yields {} for a super
+     * admin, so the owner still reaches every branch.
+     *
+     * The refusal is the EXISTING 404 below, not a 403, and that is deliberate:
+     * a 403 would confirm the id is real and belongs to the other branch, which
+     * is itself the disclosure being closed. Out of scope is indistinguishable
+     * from does not exist.
+     */
+    const member = await Member.findOne({ _id: id, ...scopeFilter(req) });
     if (!member) {
       return res
         .status(404)
@@ -346,7 +374,9 @@ export const renewMembership = async (req, res) => {
     const { id } = req.params;
     const { planCode, startDate, endDate, totalFee, payment } = req.body;
 
-    const member = await Member.findById(id);
+    // scopeFilter spread LAST — renewing (and re-dating, re-pricing and
+    // clearing the payments of) the other branch's member is refused as a 404.
+    const member = await Member.findOne({ _id: id, ...scopeFilter(req) });
     if (!member) {
       return res
         .status(404)
@@ -421,7 +451,9 @@ export const addPayment = async (req, res) => {
       });
     }
 
-    const member = await Member.findById(id);
+    // scopeFilter spread LAST — money must not be written onto the other
+    // branch's member, which would also move their outstanding balance.
+    const member = await Member.findOne({ _id: id, ...scopeFilter(req) });
     if (!member) {
       return res
         .status(404)
@@ -457,14 +489,16 @@ export const addPayment = async (req, res) => {
 export const deleteMember = async (req, res) => {
   try {
     const { id } = req.params;
-    const member = await Member.findById(id);
+    // scopeFilter spread LAST. This is the worst case of the by-id hole: a
+    // hard delete of another branch's member, with no soft-delete to undo it.
+    const member = await Member.findOne({ _id: id, ...scopeFilter(req) });
     if (!member) {
       return res
         .status(404)
         .json({ isOk: false, status: 404, message: "Member not found" });
     }
 
-    await Member.findByIdAndDelete(id);
+    await Member.findOneAndDelete({ _id: id, ...scopeFilter(req) });
 
     return res.status(200).json({
       isOk: true,
@@ -483,7 +517,13 @@ export const deleteMember = async (req, res) => {
 
 export const getMemberById = async (req, res) => {
   try {
-    const member = await Member.findById(req.params.id);
+    // scopeFilter spread LAST — the read the audit confirmed live: a Vasna
+    // admin fetching a Gotri member id received mobile, email, address, plan
+    // and the entire payments[] array. It is now a 404.
+    const member = await Member.findOne({
+      _id: req.params.id,
+      ...scopeFilter(req),
+    });
     if (!member) {
       return res
         .status(404)

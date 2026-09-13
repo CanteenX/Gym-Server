@@ -1,7 +1,11 @@
 import Transaction from "../../models/Transaction.js";
 import Member from "../../models/Member.js";
 import { nextReceiptNumber } from "../../utils/receiptNumber.js";
-import { financialScopeFilter } from "../../middlewares/branchScope.js";
+import {
+  financialScopeFilter,
+  scopeFilter,
+  scopedBranch,
+} from "../../middlewares/branchScope.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -92,7 +96,13 @@ export const recordIncome = async (req, res) => {
     let member = null;
 
     if (memberId) {
-      member = await Member.findById(memberId);
+      // The member is reached BY ID here, so it needs the same scope as
+      // GET /members/:id. Unscoped, a Vasna admin could push a payment onto a
+      // Gotri member's current-period balance and mint a receipt carrying that
+      // member's name and mobile — a cross-branch write, not just a read.
+      // Member uses scopeFilter (not financialScopeFilter): members have no
+      // "Common" branch.
+      member = await Member.findOne({ _id: memberId, ...scopeFilter(req) });
       if (!member) {
         return res
           .status(404)
@@ -107,7 +117,11 @@ export const recordIncome = async (req, res) => {
       amount: Number(amount),
       transactionDate: when,
       mode: mode || "Cash",
-      branch: branch || member?.branch || "Vasna",
+      // scopedBranch() FIRST: a branch admin's ledger rows land in their own
+      // branch whatever the body asks for, so they cannot post income into the
+      // other branch's P&L (or into "Common", which only a super admin may
+      // touch). null for a super admin, who keeps the existing behaviour.
+      branch: scopedBranch(req) || branch || member?.branch || "Vasna",
       receiptNo,
       memberId: member?._id || null,
       memberName: member?.fullName || req.body.memberName || "",
@@ -186,7 +200,9 @@ export const recordExpense = async (req, res) => {
       amount: Number(amount),
       transactionDate: transactionDate ? new Date(transactionDate) : new Date(),
       mode: mode || "Cash",
-      branch: branch || "Vasna",
+      // scopedBranch() FIRST — see recordIncome. A branch admin cannot book
+      // an expense against the other branch, nor against "Common".
+      branch: scopedBranch(req) || branch || "Vasna",
       category: category.trim(),
       paidTo: paidTo?.trim() || "",
       billNo: billNo?.trim() || "",
@@ -215,7 +231,24 @@ export const recordExpense = async (req, res) => {
 export const updateTransaction = async (req, res) => {
   try {
     const { id } = req.params;
-    const txn = await Transaction.findById(id);
+    /**
+     * BRANCH SCOPE ON A BY-ID WRITE. listTransactionsByParams and the summary
+     * both went through buildFilter(), which applies financialScopeFilter —
+     * but `findById(id)` did not, so a branch admin could edit (and below,
+     * cancel) any row in the ledger by id alone.
+     *
+     * financialScopeFilter rather than scopeFilter because Transaction.branch
+     * has a third value, "Common" (shared rent, software, the owner's salary).
+     * A branch admin must reach neither the other branch's rows nor Common;
+     * both are simply absent from their filter, so both 404.
+     *
+     * Spread LAST, and the refusal is the existing 404 — not a 403, which
+     * would confirm the row exists elsewhere.
+     */
+    const txn = await Transaction.findOne({
+      _id: id,
+      ...financialScopeFilter(req),
+    });
     if (!txn) {
       return res
         .status(404)
@@ -224,16 +257,23 @@ export const updateTransaction = async (req, res) => {
 
     // The receipt number and direction are deliberately immutable: a financial
     // record that can be renumbered after the fact is not a record.
-    [
+    // "branch" is editable ONLY by a super admin. Without this a branch admin
+    // who legitimately reached one of their OWN rows could set branch to the
+    // other gym or to "Common" and move the money out of their P&L — the same
+    // boundary, crossed on the way out instead of on the way in. It is dropped
+    // rather than refused so an admin form that echoes the current branch back
+    // unchanged still saves.
+    const editable = [
       "mode",
-      "branch",
       "category",
       "paidTo",
       "billNo",
       "note",
       "memberName",
       "memberMobile",
-    ].forEach((f) => {
+    ];
+    if (!scopedBranch(req)) editable.push("branch");
+    editable.forEach((f) => {
       if (req.body[f] !== undefined) txn[f] = req.body[f];
     });
 
@@ -269,7 +309,12 @@ export const updateTransaction = async (req, res) => {
 export const deleteTransaction = async (req, res) => {
   try {
     const { id } = req.params;
-    const txn = await Transaction.findById(id);
+    // financialScopeFilter spread LAST — cancelling the other branch's income
+    // (or a "Common" cost) by id is refused as a 404. See updateTransaction.
+    const txn = await Transaction.findOne({
+      _id: id,
+      ...financialScopeFilter(req),
+    });
     if (!txn) {
       return res
         .status(404)
@@ -494,7 +539,13 @@ export const getCashFlowSummary = async (req, res) => {
 /** Everything a printable receipt needs, in one call. */
 export const getReceipt = async (req, res) => {
   try {
-    const txn = await Transaction.findById(req.params.id);
+    // financialScopeFilter spread LAST — the read the audit confirmed live: a
+    // Vasna admin fetching a Gotri transaction id received the receipt number,
+    // amount, and the member's name and mobile. It is now a 404.
+    const txn = await Transaction.findOne({
+      _id: req.params.id,
+      ...financialScopeFilter(req),
+    });
     if (!txn) {
       return res
         .status(404)

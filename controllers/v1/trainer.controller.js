@@ -1,6 +1,10 @@
 import Trainer from "../../models/Trainer.js";
 import Member from "../../models/Member.js";
-import { scopeFilter, resolveBranchFilter } from "../../middlewares/branchScope.js";
+import {
+  scopeFilter,
+  resolveBranchFilter,
+  scopedBranch,
+} from "../../middlewares/branchScope.js";
 
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -57,7 +61,9 @@ export const createTrainer = async (req, res) => {
       fullName: fullName.trim(),
       mobileNumber: mobileNumber.trim(),
       email: email?.trim() || "",
-      branch: branch || "Vasna",
+      // scopedBranch() FIRST — a branch admin's new trainers land in their own
+      // branch whatever the body says. null for a super admin.
+      branch: scopedBranch(req) || branch || "Vasna",
       notes: notes?.trim() || "",
       isActive: isActive !== undefined ? isActive : true,
     });
@@ -83,18 +89,31 @@ export const createTrainer = async (req, res) => {
 export const updateTrainer = async (req, res) => {
   try {
     const { id } = req.params;
-    const trainer = await Trainer.findById(id);
+    /**
+     * BRANCH SCOPE ON A BY-ID LOOKUP. Both list endpoints here were already
+     * scoped (listAllTrainers, listTrainersByParams) while every by-id verb
+     * was not — the same split that left Member and Transaction open. Trainer
+     * rows carry name, mobile and email, so an unscoped read is a staff data
+     * leak and an unscoped write is worse.
+     *
+     * Spread LAST; the refusal is the existing 404, not a 403, so the response
+     * does not reveal that the id is real in the other branch.
+     */
+    const trainer = await Trainer.findOne({ _id: id, ...scopeFilter(req) });
     if (!trainer) {
       return res
         .status(404)
         .json({ isOk: false, status: 404, message: "Trainer not found" });
     }
 
-    ["fullName", "mobileNumber", "email", "branch", "notes", "isActive"].forEach(
-      (f) => {
-        if (req.body[f] !== undefined) trainer[f] = req.body[f];
-      },
-    );
+    // "branch" is editable ONLY by a super admin. Otherwise a branch admin who
+    // legitimately reached one of their own trainers could push them into the
+    // other branch — crossing the same boundary on the way out.
+    const editable = ["fullName", "mobileNumber", "email", "notes", "isActive"];
+    if (!scopedBranch(req)) editable.push("branch");
+    editable.forEach((f) => {
+      if (req.body[f] !== undefined) trainer[f] = req.body[f];
+    });
 
     await trainer.save();
 
@@ -121,7 +140,8 @@ export const updateTrainer = async (req, res) => {
 export const deleteTrainer = async (req, res) => {
   try {
     const { id } = req.params;
-    const trainer = await Trainer.findById(id);
+    // scopeFilter spread LAST — deleting the other branch's trainer is a 404.
+    const trainer = await Trainer.findOne({ _id: id, ...scopeFilter(req) });
     if (!trainer) {
       return res
         .status(404)
@@ -138,7 +158,7 @@ export const deleteTrainer = async (req, res) => {
       });
     }
 
-    await Trainer.findByIdAndDelete(id);
+    await Trainer.findOneAndDelete({ _id: id, ...scopeFilter(req) });
 
     return res.status(200).json({
       isOk: true,
@@ -227,14 +247,20 @@ export const listTrainersByParams = async (req, res) => {
 export const getTrainerMembers = async (req, res) => {
   try {
     const { id } = req.params;
-    const trainer = await Trainer.findById(id);
+    // scopeFilter spread LAST on BOTH queries. The trainer check alone is not
+    // enough: a member could have been assigned across branches before this
+    // fix, and the roster must not surface them now.
+    const trainer = await Trainer.findOne({ _id: id, ...scopeFilter(req) });
     if (!trainer) {
       return res
         .status(404)
         .json({ isOk: false, status: 404, message: "Trainer not found" });
     }
 
-    const members = await Member.find({ trainerId: id }).sort({ fullName: 1 });
+    const members = await Member.find({
+      trainerId: id,
+      ...scopeFilter(req),
+    }).sort({ fullName: 1 });
 
     return res.status(200).json({
       isOk: true,
@@ -269,7 +295,16 @@ export const assignMembers = async (req, res) => {
       });
     }
 
-    const trainer = await Trainer.findById(id);
+    // scopeFilter spread LAST on the trainer AND on the members.
+    //
+    // The updateMany was the sharpest edge in this file: memberIds comes
+    // straight off the request body and was written with NO branch filter at
+    // all, so a Vasna admin could reassign an arbitrary list of Gotri members
+    // to a Vasna trainer in one call. listUnassignedMembers scopes the picker
+    // it is normally driven from, but a picker is not a boundary — the write
+    // is. Out-of-scope ids now simply match nothing, and modifiedCount reports
+    // honestly how many were actually assigned.
+    const trainer = await Trainer.findOne({ _id: id, ...scopeFilter(req) });
     if (!trainer) {
       return res
         .status(404)
@@ -277,7 +312,7 @@ export const assignMembers = async (req, res) => {
     }
 
     const result = await Member.updateMany(
-      { _id: { $in: memberIds } },
+      { _id: { $in: memberIds }, ...scopeFilter(req) },
       { $set: { trainerId: id } },
     );
 
@@ -302,7 +337,11 @@ export const unassignMember = async (req, res) => {
   try {
     const { id, memberId } = req.params;
 
-    const member = await Member.findById(memberId);
+    // scopeFilter spread LAST — unassigning the other branch's member is a 404.
+    const member = await Member.findOne({
+      _id: memberId,
+      ...scopeFilter(req),
+    });
     if (!member) {
       return res
         .status(404)
