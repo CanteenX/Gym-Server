@@ -211,6 +211,10 @@ const runLive = (members, log, channel, extra = {}) =>
     deps: { Member: fakeMemberModel(members), ReminderLog: log },
     sendGapMs: 0,
     logger: capturingLogger(),
+    // The owner digest reads the EmailSetup row from Mongo to resolve its
+    // recipient, and these suites are deliberately DB-free. Tests that care
+    // about it pass their own stub through `extra`.
+    ownerDigest: false,
     ...extra,
   });
 

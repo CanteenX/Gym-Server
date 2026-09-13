@@ -43,7 +43,7 @@
  */
 import MemberModel from "../models/Member.js";
 import ReminderLogModel from "../models/ReminderLog.js";
-import { sendMail } from "./mailService.js";
+import { sendMail, getMailFromAddress } from "./mailService.js";
 import {
   MEMBER_COHORTS,
   MEMBER_COHORT_LIST,
@@ -104,6 +104,15 @@ const DEFAULT_SEND_GAP_MS = 150;
 
 /** How many members one cohort query will pull at most. A safety rail, not a page size. */
 const COHORT_FETCH_LIMIT = 2000;
+
+/**
+ * Ceiling on the call list carried in the report and the owner digest.
+ *
+ * A digest nobody can read is a digest nobody reads. Past this the email says
+ * how many more there are and points at the export, rather than pasting a
+ * thousand rows into an inbox.
+ */
+const UNREACHABLE_CAP = 200;
 
 const sleep = (ms) =>
   ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms).unref?.()) : undefined;
@@ -274,6 +283,90 @@ export const EMAIL_CHANNEL = {
 /** Channels by name, so a caller can pick one without importing it. */
 export const CHANNELS = { EMAIL: EMAIL_CHANNEL };
 
+/** Human label per cohort, for the digest. */
+const COHORT_LABEL = {
+  EXPIRING_SOON: "Expiring within 7 days",
+  EXPIRED: "Already expired",
+  PAYMENT_DUE: "Payment outstanding",
+};
+
+const asDate = (d) => (d ? new Date(d).toISOString().slice(0, 10) : "—");
+
+/**
+ * Emails the front desk the members this run could not reach.
+ *
+ * WHY: `Member.email` is optional and mobile is the required field, so today
+ * essentially every member lands in `unreachable`. Without this the scheduler
+ * computes three correct cohorts every morning and then does nothing with
+ * them — a feature that runs, passes its tests, and reaches nobody.
+ *
+ * The gym HAS these people's phone numbers. So the work goes to the front desk
+ * as a call list instead of vanishing. This is not a substitute for messaging
+ * the member directly; it is what can be delivered with the contact details
+ * that actually exist. As members gain addresses they drop out of this list on
+ * their own and get mailed directly, with no change here.
+ *
+ * One email per run, to the gym, so it costs nothing against the daily cap
+ * that protects OTP login.
+ *
+ * Never throws: the digest is the last thing a run does, and a dead SMTP
+ * server must not turn a successful reminder run into a failed one.
+ */
+export const sendOwnerDigest = async (report, options = {}) => {
+  const rows = report.unreachable || [];
+  if (!rows.length) return { sent: false, reason: "nobody to report" };
+
+  const to =
+    options.to || process.env.LEAD_NOTIFY_TO || (await getMailFromAddress());
+  if (!to) return { sent: false, reason: "no recipient configured" };
+
+  const byCohort = new Map();
+  for (const r of rows) {
+    if (!byCohort.has(r.cohort)) byCohort.set(r.cohort, []);
+    byCohort.get(r.cohort).push(r);
+  }
+
+  const lines = [];
+  const htmlParts = [];
+  for (const [cohort, list] of byCohort) {
+    const label = COHORT_LABEL[cohort] || cohort;
+    lines.push(`${label} (${list.length})`);
+    htmlParts.push(`<h3 style="margin:18px 0 6px">${label} (${list.length})</h3><ul>`);
+    for (const m of list) {
+      const bits = [m.name, m.phone, m.branch || "no branch"];
+      if (cohort === "PAYMENT_DUE" && m.balance) bits.push(`owes ${m.balance}`);
+      else bits.push(`ends ${asDate(m.endDate)}`);
+      lines.push(`  • ${bits.join(" — ")}`);
+      htmlParts.push(`<li>${bits.join(" — ")}</li>`);
+    }
+    htmlParts.push("</ul>");
+  }
+
+  const capped = report.totals.skippedNoAddress > rows.length;
+  if (capped) {
+    const more = report.totals.skippedNoAddress - rows.length;
+    lines.push("", `…and ${more} more. Export the member list for the full set.`);
+    htmlParts.push(`<p>…and ${more} more. Export the member list for the full set.</p>`);
+  }
+
+  const intro =
+    "These members are due a reminder and have no email address on file, so " +
+    "nobody could be emailed. Their phone numbers are below.";
+
+  try {
+    await EMAIL_CHANNEL.send({
+      to,
+      subject: `Mid City Gym — ${rows.length} member${rows.length === 1 ? "" : "s"} to call`,
+      text: [intro, "", ...lines].join("\n"),
+      html: `<p>${intro}</p>${htmlParts.join("")}`,
+    });
+    return { sent: true, to, count: rows.length };
+  } catch (error) {
+    (options.logger || console).warn(`[reminders] owner digest failed: ${error?.message || error}`);
+    return { sent: false, reason: error?.message || "send failed" };
+  }
+};
+
 // ===================================================================
 // The run
 // ===================================================================
@@ -417,6 +510,21 @@ export const runReminders = async (options = {}) => {
     },
     /** The inspectable list — WHO, and why. Truncated so a report stays readable. */
     recipients: [],
+    /**
+     * The members this run could not reach, kept rather than counted.
+     *
+     * WHY THIS EXISTS: `Member.email` is optional and `mobileNumber` is
+     * required — members sign in with a mobile number, not an address — so in
+     * practice almost nobody has one. Counting them as `skippedNoAddress` and
+     * discarding them turned the whole feature into a no-op: the cohorts were
+     * computed correctly and then thrown away.
+     *
+     * They are a call list. The gym has their phone number; it just cannot
+     * email them. `sendOwnerDigest` posts this to the front desk once per run,
+     * so the work still reaches somebody who can act on it. When members do
+     * have addresses they simply stop appearing here and get mailed directly.
+     */
+    unreachable: [],
     stoppedEarly: false,
   };
 
@@ -457,6 +565,17 @@ export const runReminders = async (options = {}) => {
       if (!to) {
         counts.skippedNoAddress += 1;
         report.totals.skippedNoAddress += 1;
+        // Kept, not just counted — this is the call list. See report.unreachable.
+        if (report.unreachable.length < UNREACHABLE_CAP) {
+          report.unreachable.push({
+            cohort,
+            name: member.fullName || "(no name)",
+            phone: member.mobileNumber || "",
+            branch: member.branch || "",
+            endDate: member.endDate || null,
+            balance: memberBalance(member),
+          });
+        }
         continue;
       }
 
@@ -553,6 +672,24 @@ export const runReminders = async (options = {}) => {
 
       await sleep(sendGapMs);
     }
+  }
+
+  /**
+   * The call list goes to the front desk — but never from a dry run.
+   *
+   * A dry run must send NOTHING, and that has to include this. Sending the
+   * owner a digest from a preview would make "dry run" mean "sends one email",
+   * which is exactly the kind of exception that makes a safety switch
+   * untrustworthy.
+   */
+  //
+  // Injectable for the same reason `channel` is: the digest resolves its
+  // recipient from the EmailSetup row in Mongo, and the offline suites have no
+  // database. Pass `false` to skip it, or a function to observe it.
+  const digest =
+    options.ownerDigest === undefined ? sendOwnerDigest : options.ownerDigest;
+  if (!dryRun && digest && report.unreachable.length) {
+    report.ownerDigest = await digest(report, { logger: log });
   }
 
   report.finishedAt = new Date().toISOString();
