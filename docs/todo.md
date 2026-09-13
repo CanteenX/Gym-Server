@@ -141,30 +141,51 @@ Known gaps carried forward (not defects, decisions needed):
 
 ---
 
-## Phase 2 — SEO + page-wise SEO Manager (10–14 h)
+## Phase 2 — SEO + page-wise SEO Manager (10–14 h) — DONE except live deploy
+
+Commits: `0c84403` (server) · `eb97650` (admin) · `ad9ded9` (site)
 
 Site-wide
-- [ ] `sitemap.xml` from routes + CMS pages; portal routes excluded
-- [ ] `robots.txt`
-- [ ] JSON-LD `LocalBusiness` per branch (Vasna, Gotri — real address, hours, geo)
-- [ ] Canonical URLs; `next/image` sizing pass
+- [x] `sitemap.xml` — **verified**: contains exactly `/`, `/programs`, `/contact`. Filters on membership of the marketing route table rather than on whatever the API returns, so an active row pointing at a route we do not serve cannot publish a URL (tested with a hostile `/evil` row)
+- [x] `robots.txt` — disallows `/admin`, all six portal routes, `/internal/`, `/api/`
+- [x] JSON-LD per branch — `["ExerciseGym","LocalBusiness"]`, real phones, **per-branch** opening hours (they genuinely differ: Vasna Mon–Sat 05:00–23:00, Gotri 05:30–22:30). `Organization` + `WebSite` + `parentOrganization` linkage. Driven from `site.ts`, so the `Common / Shared Costs` accounting row can never be published as a gym
+- [x] Canonical URLs per page; `next/image` sizing pass
+- [x] `noIndex` deliberately **not** mirrored into `robots.txt` — disallowing a URL stops the crawl, which stops the crawler seeing the `noindex` tag, so a blocked page can be indexed URL-only and then never de-indexed
 
 Manager
-- [ ] `SeoMeta` model (slug unique, noIndex, isActive, …)
-- [ ] Seed rows for all marketing routes; `noIndex: true` seeded for the 6 portal routes
-- [ ] Pane 1: searchable list, category chips, add/edit/delete, completeness label **with text, not colour-only**
-- [ ] Pane 2: counters (amber near / red past 60 & 160), keyword chips, canonical (validated; defaults to route's absolute URL), OG block with thumbnail
-- [ ] Pane 3: score with clickable rules → jump to field; Google preview **mobile/desktop toggle**; social card
-- [ ] Icon field uses existing `IconPicker` (no free-text class)
-- [ ] `generateMetadata()` per route reads `SeoMeta` via `API_INTERNAL_URL`; **sensible defaults when a row is missing**
-- [ ] Save → `revalidatePath()`
-- [ ] `MenuMaster` row seeded
+- [x] `SeoMeta` model (slug unique, noIndex, isActive, …)
+- [x] 9 rows seeded — 3 marketing + **6 portal with `noIndex: true`**; content is real, not placeholder (home: 35-char title, 135-char description)
+- [x] Pane 1: searchable list, category chips, add/edit/delete, completeness as **word + "N of M checks pass"**, never colour alone
+- [x] Pane 2: counters amber at 90% / red past 60 & 160, keyword chips, canonical validated, OG block
+- [x] Pane 3: score with clickable rules that focus the offending field; Google preview **mobile (50/120) vs desktop (60/160) toggle**; social card
+- [x] Icon field uses the existing `IconPicker`
+- [x] `generateMetadata()` reads `SeoMeta` via `API_INTERNAL_URL`, falling back to shipped copy. Verified by building against a dead host
+- [x] Saves revalidate; a re-pointed slug revalidates **both** old and new, or the old route keeps serving metadata it no longer owns
+- [x] `/seo-manager` `MenuMaster` row seeded (least-privilege, no blanket grant)
+- [x] Precedence settled: `SeoMeta` beats the Phase 1 `sectionKey: "seo"` row **all-or-nothing**, so a page can never take its title from one editor and its description from another
 
 **Gate**
-- [ ] Code review
-- [ ] Browser: edit meta title → `view-source` of the live page shows it; portal route has `noindex`; sitemap excludes portal; score rules jump to fields; 1440 + 390 px
-- [ ] Any new icon: rendered width > 0; any new colour: ≥ 4.5:1
-- [ ] Live smoke green
+- [x] Code review — three agents; every cross-repo claim re-verified
+- [x] Browser: **GATE PASSED**, 38 checks. Edited a meta title → live page `<title>` changed immediately (via `curl`, no JS), then restored to seeded values
+- [x] Fixed a **client/server contract mismatch**: the editor accepted a `localhost` canonical that the server rejects, so every save in local dev would have 400'd on a field the editor never touched
+- [x] Fixed a **clipped destructive action**: the SEO table ran 58 px past its scroll container at 1440 px, hiding *Delete*. The gate missed it — it only checks clipping at 390 px and the table is inside `.table-responsive`. Actions are icon-only now with aria-labels naming their page
+- [x] Two pre-existing bugs fixed in passing: portal title shipped as `Member Portal · Mid City Gym · Mid City Gym`; portal had no `robots: noindex`
+- [ ] Live smoke green — BLOCKED with Phase 0 on the Vercel account restriction
+
+Open item for the owner:
+- [ ] **Two postal addresses and map pins.** `streetAddress`, `postalCode` and `geo` are omitted from the JSON-LD because they exist nowhere — the `Branch` documents hold `address: ""` for both gyms. Nothing was invented. `Branch.streetAddress`/`postalCode`/`geo` in `src/lib/site.ts` are typed and documented; filling them emits the keys with no other change
+
+---
+
+## Phase 1 carry-forward — repeatable CMS content — server DONE
+
+- [x] `SiteItem` model: programmes, plans, FAQs, trainers, class grid, testimonials, transformations — the structured records `SiteContent`'s flat shape cannot express
+- [x] **48 rows seeded from the content the site already ships**, so the editor opens with real data
+- [x] `fields` is `Mixed`, not a Mongoose `Map`: a Map read through `.lean()` serialises to `{}`, and the public read *is* `.lean()`, so every row's extras would blank in production while passing any test that skipped it
+- [x] `fields` validated against a per-collection allowlist — a typo like `pirce` is a 400 naming the key, not a silently blank price
+- [x] `classes` flattened from a positional grid to 24 one-per-cell rows, keyed on `(collection, title, day, time)` because "Zumba" is five separate cells
+- [ ] Admin editor screen — in progress
+- [ ] Frontend switchover — in progress. Until it lands the site still renders the hardcoded copy
 
 ---
 
