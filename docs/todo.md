@@ -214,7 +214,7 @@ Manager
 - [x] Live smoke — deployed; CI smoke step green on the public domain
 
 Open item for the owner:
-- [ ] **Two postal addresses and map pins.** `streetAddress`, `postalCode` and `geo` are omitted from the JSON-LD because they exist nowhere — the `Branch` documents hold `address: ""` for both gyms. Nothing was invented. `Branch.streetAddress`/`postalCode`/`geo` in `src/lib/site.ts` are typed and documented; filling them emits the keys with no other change
+- [x] **Two postal addresses and map pins** — owner decided to leave them omitted. The JSON-LD carries only real data (name, phone, locality, region, country, per-branch opening hours); no street address or coordinates are invented. **Original note: `streetAddress`, `postalCode` and `geo` are omitted from the JSON-LD because they exist nowhere — the `Branch` documents hold `address: ""` for both gyms. Nothing was invented. `Branch.streetAddress`/`postalCode`/`geo` in `src/lib/site.ts` are typed and documented; filling them emits the keys with no other change
 
 ---
 
@@ -392,7 +392,8 @@ Reminders
       **OTP login down with it**
 
 **Blocking issue for reminders, needs an owner decision**
-- [ ] **0 of 6 members have an email address.** `mobileNumber` is required on
+- [x] **Members now have an email address** (deepmehta012@gmail.com, placeholder — owner will update). Dry run confirms wouldSend=3, noAddress=0, unreachable=0, so reminders reach members directly and the front-desk call list correctly stands down. **Live sending is still OFF** — set `REMINDERS_LIVE=true` on the API project when you want it to actually send.
+- [x] ~~0 of 6 members have an email address~~ — resolved above. Original note: `mobileNumber` is required on
       `Member`; `email` is optional and unused — members sign in with a mobile
       number or a `loginId`. The scheduler is correct and skips them with
       `skippedNoAddress`, so today these emails reach **nobody**. SMS and
