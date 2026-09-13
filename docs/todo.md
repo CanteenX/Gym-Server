@@ -349,6 +349,48 @@ Reminders
 
 ---
 
+## Next up — CMS navigation, one menu entry per page
+
+Requested 2026-09-13, modelled on `marfatia.net/admin`, whose sidebar has a
+**CMS** group listing pages rather than one screen: Home, About, Service (with
+a submenu), Partner Page Settings, Pricing, FAQs, Contact Us, Footer, Header,
+Content Management (submenu), Social & Media (submenu).
+
+Ours currently has a single `/website-pages` screen with a `pageKey` tab strip
+and a Content Lists tab. That is fewer clicks for us to build and more clicks
+for the owner to use, and it does not scale as pages are added.
+
+**Design, with the one gotcha that decides it.** Each CMS page needs a REAL
+route and a REAL `MenuMaster` row. The cheap version — one screen with menu
+rows pointing at `/website-pages?page=faqs` — does not work:
+`MenuContext.findMenuIdByUrlInComplete` strips the query from the incoming URL
+(`url.split('?')[0]`) but compares it against `menu.url` **un-stripped**, so a
+row carrying a query string matches nothing, resolves to no `menuId`, and
+`PermissionProtected` denies the route outright. Verified by reading
+`src/context/MenuContext.jsx:409-458`.
+
+- [ ] Routes `/cms/home`, `/cms/about`, `/cms/programs`, `/cms/pricing`,
+      `/cms/faqs`, `/cms/trainers`, `/cms/testimonials`, `/cms/contact`,
+      `/cms/header`, `/cms/footer`, `/cms/social` — each rendering the existing
+      editor scoped to its own `pageKey` or `collectionKey`
+- [ ] A "CMS" `MenuGroupMaster` with a row per page, using `parentMenu` for the
+      submenu levels the reference has (`MenuMaster` already self-references)
+- [ ] **Server permission must follow.** SiteContent/SiteItem routes currently
+      check `checkPermission("/website-pages", …)`. With per-page menu rows a
+      non-super-admin granted only `/cms/faqs` would pass the client check and
+      then 403 on save. Either map the CMS routes to the matching menu, or keep
+      a single CMS permission and say so — do not leave client and server
+      disagreeing
+- [ ] Header, Footer and Social & Media have no model yet. Header/footer are
+      `SiteContent` rows with new `pageKey`s; Social & Media is currently
+      hardcoded in `Gym-frontend/src/lib/site.ts` (`site.instagram`) and needs
+      either a `SiteContent` section or a small settings collection
+- [ ] Keep `/website-pages` working, or redirect it — it is seeded, permissioned
+      and linked from existing empty-state copy
+
+Upside worth having: per-page permissions become possible, so a staff member
+can be allowed to edit FAQs without being able to touch pricing.
+
 ## Measured findings, not yet scheduled
 
 - [ ] **187 unlabelled form controls across the admin panel.** Measured, not
