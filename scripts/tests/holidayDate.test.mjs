@@ -19,10 +19,20 @@
  * immediately, rather than someone discovering "closed Saturday" showing up
  * as "closed Friday" in production.
  *
- * This assumes the process running the test is itself on IST local time —
- * the same assumption services/holidayDate.js documents and the same one
- * Attendance/BodyMetric already make. Confirmed for this environment via
- * `Intl.DateTimeFormat().resolvedOptions().timeZone` -> "Asia/Calcutta".
+ * ASSUMES NOTHING ABOUT THE PROCESS TIMEZONE, AS OF 2026-09-15.
+ *
+ * It used to open by ASSERTING the environment was Asia/Calcutta, on the
+ * grounds that the boundary case below would otherwise be meaningless. That
+ * assertion was the flaw, not the safeguard: it made the suite pass on a dev
+ * machine while production — Vercel, which runs in UTC with no TZ set — did
+ * the opposite, and the live data proved it (a holiday stored at exactly UTC
+ * midnight rather than IST midnight). A test that only runs in one timezone
+ * cannot catch a timezone bug.
+ *
+ * services/holidayDate.js now reads the +05:30 offset explicitly instead of
+ * calling setHours(), so every answer below is the same in UTC, IST or
+ * anywhere else. scripts/tests/holidayTimezone.test.mjs is the companion that
+ * forces the process clock around to prove it.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -36,8 +46,21 @@ import {
   monthRange,
 } from "../../services/holidayDate.js";
 
-test("this environment runs on IST — otherwise the boundary test below is meaningless", () => {
-  assert.equal(Intl.DateTimeFormat().resolvedOptions().timeZone, "Asia/Calcutta");
+/**
+ * The IST calendar day an instant falls on, computed from the fixed +05:30
+ * offset rather than from the process clock — so these expectations mean the
+ * same thing wherever the suite runs.
+ */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const istParts = (d) => new Date(d.getTime() + IST_OFFSET_MS);
+
+test("the helpers do not depend on the process timezone", () => {
+  // IST midnight is 18:30Z the previous day. Asserting the VALUE rather than
+  // the environment is what makes this portable.
+  assert.equal(
+    startOfDay(new Date("2026-09-14T18:35:00.000Z")).toISOString(),
+    "2026-09-14T18:30:00.000Z",
+  );
 });
 
 // ===================================================================
@@ -48,10 +71,10 @@ test("startOfDay pins the IST calendar day, not the UTC one, right across midnig
   // 23:55 IST on 14 Jan 2026 == 18:25 UTC, still the 14th in UTC too.
   const lateNightIST = new Date("2026-01-14T18:25:00.000Z");
   const day1 = startOfDay(lateNightIST);
-  assert.equal(day1.getFullYear(), 2026);
-  assert.equal(day1.getMonth(), 0); // January
+  assert.equal(istParts(day1).getUTCFullYear(), 2026);
+  assert.equal(istParts(day1).getUTCMonth(), 0); // January
   assert.equal(
-    day1.getDate(),
+    istParts(day1).getUTCDate(),
     14,
     "23:55 IST is still the 14th in IST",
   );
@@ -61,7 +84,7 @@ test("startOfDay pins the IST calendar day, not the UTC one, right across midnig
   const justAfterMidnightIST = new Date("2026-01-14T18:35:00.000Z");
   const day2 = startOfDay(justAfterMidnightIST);
   assert.equal(
-    day2.getDate(),
+    istParts(day2).getUTCDate(),
     15,
     "00:05 IST has rolled into the 15th, even though the UTC calendar date " +
       "is unchanged — a UTC-midnight implementation would wrongly report 14",
@@ -69,8 +92,8 @@ test("startOfDay pins the IST calendar day, not the UTC one, right across midnig
 
   // And the two results are exactly one calendar day apart, at local midnight.
   assert.equal(day2.getTime() - day1.getTime(), 24 * 60 * 60 * 1000);
-  assert.equal(day1.getHours(), 0);
-  assert.equal(day1.getMinutes(), 0);
+  assert.equal(istParts(day1).getUTCHours(), 0);
+  assert.equal(istParts(day1).getUTCMinutes(), 0);
   assert.equal(day1.getSeconds(), 0);
   assert.equal(day1.getMilliseconds(), 0);
 });
@@ -87,19 +110,19 @@ test("startOfDay: falsy input (\"\", null, undefined) defaults to today, matchin
   const now = new Date();
   for (const falsy of ["", null, undefined]) {
     const day = startOfDay(falsy);
-    assert.equal(day.getFullYear(), now.getFullYear());
-    assert.equal(day.getMonth(), now.getMonth());
-    assert.equal(day.getDate(), now.getDate());
+    assert.equal(istParts(day).getUTCFullYear(), istParts(now).getUTCFullYear());
+    assert.equal(istParts(day).getUTCMonth(), istParts(now).getUTCMonth());
+    assert.equal(istParts(day).getUTCDate(), istParts(now).getUTCDate());
   }
 });
 
 test("startOfDay: no argument defaults to today, at local midnight", () => {
   const today = startOfDay();
   const now = new Date();
-  assert.equal(today.getFullYear(), now.getFullYear());
-  assert.equal(today.getMonth(), now.getMonth());
-  assert.equal(today.getDate(), now.getDate());
-  assert.equal(today.getHours(), 0);
+  assert.equal(istParts(today).getUTCFullYear(), istParts(now).getUTCFullYear());
+  assert.equal(istParts(today).getUTCMonth(), istParts(now).getUTCMonth());
+  assert.equal(istParts(today).getUTCDate(), istParts(now).getUTCDate());
+  assert.equal(istParts(today).getUTCHours(), 0);
 });
 
 // ===================================================================
@@ -111,16 +134,16 @@ test("addDays never mutates its input", () => {
   const original = day.getTime();
   const plus7 = addDays(day, 7);
   assert.equal(day.getTime(), original, "input must be untouched");
-  assert.equal(plus7.getDate(), 21);
+  assert.equal(istParts(plus7).getUTCDate(), 21);
 });
 
 test("holidayEndDay: endDate for a range, date itself for a single day", () => {
   assert.equal(
-    holidayEndDay({ date: "2026-09-14", endDate: null }).getDate(),
+    istParts(holidayEndDay({ date: "2026-09-14", endDate: null })).getUTCDate(),
     14,
   );
   assert.equal(
-    holidayEndDay({ date: "2026-09-14", endDate: "2026-09-16" }).getDate(),
+    istParts(holidayEndDay({ date: "2026-09-14", endDate: "2026-09-16" })).getUTCDate(),
     16,
   );
 });
@@ -192,16 +215,16 @@ test("overlapFilter: a range that STARTED before the window but is still running
 
 test("monthRange: September 2026 is the 1st through the 30th, at local midnight", () => {
   const range = monthRange(2026, 9);
-  assert.equal(range.from.getFullYear(), 2026);
-  assert.equal(range.from.getMonth(), 8); // 0-indexed
-  assert.equal(range.from.getDate(), 1);
-  assert.equal(range.to.getDate(), 30);
-  assert.equal(range.from.getHours(), 0);
+  assert.equal(istParts(range.from).getUTCFullYear(), 2026);
+  assert.equal(istParts(range.from).getUTCMonth(), 8); // 0-indexed
+  assert.equal(istParts(range.from).getUTCDate(), 1);
+  assert.equal(istParts(range.to).getUTCDate(), 30);
+  assert.equal(istParts(range.from).getUTCHours(), 0);
 });
 
 test("monthRange: February in a leap year ends on the 29th", () => {
   const range = monthRange(2028, 2);
-  assert.equal(range.to.getDate(), 29);
+  assert.equal(istParts(range.to).getUTCDate(), 29);
 });
 
 test("monthRange: rejects an out-of-range or non-numeric month", () => {

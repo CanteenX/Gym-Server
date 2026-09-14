@@ -32,18 +32,54 @@
  */
 
 /** A finite Date normalised to LOCAL midnight, or null for a bad input. */
+/**
+ * IST is UTC+05:30 and has never observed daylight saving, so the offset is a
+ * constant rather than something to look up. Used to shift an instant into IST,
+ * do calendar arithmetic with the UTC accessors (which cannot be influenced by
+ * the process clock), and shift back.
+ */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/**
+ * The instant of IST midnight on the calendar day `value` falls on.
+ *
+ * This was `d.setHours(0, 0, 0, 0)` — the PROCESS's local midnight — resting on
+ * the assumption that the Node process runs in IST. That held on the dev
+ * machine, where the timezone really is Asia/Calcutta, and is false in
+ * production: Vercel runs in UTC and nothing sets TZ. The live data proved it —
+ * the one stored holiday read 2026-09-14T00:00:00.000Z, exactly UTC midnight,
+ * where an IST server would have written 2026-09-13T18:30:00.000Z.
+ *
+ * The cost was a 5.5-hour window every night: between 00:00 and 05:30 IST a UTC
+ * server's "today" is still YESTERDAY in Vadodara, so the member portal
+ * answered "closed today" for the wrong day and a closure entered in those
+ * hours was filed a day early.
+ *
+ * Reading the offset explicitly removes the dependency entirely: the answer is
+ * now the same whether the process is in UTC, IST or anywhere else, which is
+ * what scripts/tests/holidayTimezone.test.mjs forces by running under TZ=UTC.
+ *
+ * Rows written under the OLD convention still resolve correctly and need no
+ * migration: UTC midnight of day D (D T00:00Z) falls inside IST day D, whose
+ * window is D-1 T18:30Z .. D T18:30Z. Every comparison here is a range, so an
+ * old row lands on the same calendar day a new one would.
+ */
 export const startOfDay = (value) => {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) return null;
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const ist = new Date(d.getTime() + IST_OFFSET_MS);
+  ist.setUTCHours(0, 0, 0, 0);
+  return new Date(ist.getTime() - IST_OFFSET_MS);
 };
 
 /** `day` plus `n` calendar days, still at local midnight. Never mutates `day`. */
 export const addDays = (day, n) => {
-  const d = new Date(day);
-  d.setDate(d.getDate() + n);
-  return d;
+  // setDate()/getDate() read the PROCESS clock, so on a UTC server this
+  // rolled the wrong calendar day at the IST boundary. Shift into IST, move
+  // the day with the UTC accessors, shift back.
+  const ist = new Date(new Date(day).getTime() + IST_OFFSET_MS);
+  ist.setUTCDate(ist.getUTCDate() + n);
+  return new Date(ist.getTime() - IST_OFFSET_MS);
 };
 
 /**
@@ -107,9 +143,11 @@ export const monthRange = (year, month) => {
   if (!Number.isInteger(y) || !Number.isInteger(m) || m < 1 || m > 12) {
     return null;
   }
-  const from = startOfDay(new Date(y, m - 1, 1));
+  // Date.UTC, not new Date(y, m, d): the latter builds the date in the
+  // process's timezone, which is the dependency this module just removed.
+  const from = startOfDay(new Date(Date.UTC(y, m - 1, 1, 12)));
   // Day 0 of the FOLLOWING month is JavaScript's own idiom for "the last day
   // of this month" — it rolls back rather than overflowing.
-  const to = startOfDay(new Date(y, m, 0));
+  const to = startOfDay(new Date(Date.UTC(y, m, 0, 12)));
   return { from, to };
 };
