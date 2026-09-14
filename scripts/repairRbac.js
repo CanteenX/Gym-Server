@@ -140,12 +140,27 @@ export const SUPER_ADMIN_EMAIL = "nventra@gmail.com";
  * told to keep.
  */
 /**
- * The one menu whose FLAGS are reconciled to the baseline on every run.
+ * The menus whose FLAGS are reconciled to the baseline on every run.
  *
- * See the note in the reconciliation loop for why this is a list of one and
- * not "all of them".
+ * Top-up only ever ADDS a url that is missing; it never reshapes an existing
+ * row. That is the right default — most rows were tuned by hand or seeded by
+ * an older policy, and silently rewriting them is what this script's "never
+ * reshape" rule exists to prevent. Reconciliation is the deliberate exception,
+ * and every entry here is a decision the owner actually made.
+ *
+ *   /attendance-overview — the front desk may reverse a refused scan.
+ *   /members, /trainers  — these routes were UNGATED until 2026-09-14, so the
+ *     flags on them had never been enforced and had drifted from the baseline
+ *     accordingly: live, a branch admin had no `delete` and the front desk had
+ *     no `write` or `edit`. Switching the gate on without repairing them would
+ *     have taken enrolment and payment-taking away from the desk overnight —
+ *     a security fix presenting as a broken till.
+ *
+ * A url still NOT listed here (such as /holiday-master) is one whose rows were
+ * created correctly by top-up in the first place, so there is nothing to
+ * repair and reconciling would only risk overwriting a hand-tuned flag.
  */
-export const RECONCILED_FLAGS_URL = "/attendance-overview";
+export const RECONCILED_FLAGS_URLS = ["/attendance-overview", "/members", "/trainers"];
 
 /**
  * `/holiday-master` DELIBERATELY DOES NOT JOIN RECONCILED_FLAGS_URL.
@@ -255,8 +270,16 @@ export const TIER_BASELINES = {
    * look identical.
    */
   admin: {
-    "/members": grant("read", "write", "edit", "delete", "print"),
-    "/trainers": grant("read", "write", "edit", "delete"),
+    /**
+     * Every flag spelled out, because /members is RECONCILED: a reconciled
+     * row is rewritten to match this exactly, so a flag omitted here is a
+     * flag taken away. A branch admin already held print and mail; the only
+     * change the owner asked for is `delete`.
+     */
+    "/members": grant("read", "write", "edit", "delete", "print", "mail"),
+    // Reconciled, as /members above — print and mail are named so that
+    // adding `delete` does not silently strip them.
+    "/trainers": grant("read", "write", "edit", "delete", "print", "mail"),
     "/class-sessions": grant("read", "write", "edit", "delete"),
     "/member-exercise-plan": grant("read", "write", "edit", "delete"),
     "/membership-plans": grant("read"),
@@ -293,7 +316,14 @@ export const TIER_BASELINES = {
    * here; the super admin can tick it per role if a particular desk needs it.
    */
   staff: {
-    "/members": grant("read", "write"),
+    /**
+     * `edit` is not decoration here. POST /members/:id/renew and
+     * POST /members/:id/payments are both gated on `edit`, because both change
+     * an EXISTING member. Without it the front desk could enrol a walk-in and
+     * then not take the money for the membership they had just sold.
+     * `delete` is deliberately absent — removal stays with a branch admin.
+     */
+    "/members": grant("read", "write", "edit"),
     "/trainers": grant("read"),
     "/class-sessions": grant("read"),
     "/membership-plans": grant("read"),
@@ -903,7 +933,7 @@ export const repairRbac = async ({ apply = false, verifyOnly = false } = {}) => 
            * reconciles. Widening it later is a deliberate act, not a side
            * effect of a re-run.
            */
-          if (url !== RECONCILED_FLAGS_URL) return row;
+          if (!RECONCILED_FLAGS_URLS.includes(url)) return row;
           const differs = ACTIONS.some((a) => Boolean(row[a]) !== Boolean(want[a]));
           if (!differs) return row;
           reflagged.push(

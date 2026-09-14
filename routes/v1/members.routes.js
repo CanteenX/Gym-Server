@@ -1,6 +1,7 @@
 import express from "express";
 import { createSecureMultiUpload } from "../../middlewares/secureUpload.js";
 import { authMiddleware } from "../../middlewares/authMiddleware.js";
+import { checkPermission } from "../../middlewares/checkPermission.js";
 import { ensureLocalDir } from "../../config/runtime.js";
 import {
   createMember,
@@ -58,10 +59,23 @@ const memberUpload = createSecureMultiUpload({
  * Auth runs BEFORE memberUpload so an unauthenticated request is rejected
  * before multer parses any file to disk.
  *
- * checkPermission is deliberately NOT applied yet — it resolves a menu by URL
- * and 403s when the menu row is missing from MenuMaster, which would break
- * screens whose menuUrl is not registered. Per-menu authorization is a
- * separate, later change.
+ * checkPermission IS applied, as of 2026-09-14. The note that used to sit here
+ * said it was "deliberately not applied yet" because the menu row might be
+ * missing from MenuMaster and would 403 a legitimate screen. That was true when
+ * it was written and had since stopped being true — the menu row is seeded and
+ * active, and both tiers carry flags for it — but the note outlived the
+ * condition, which is how a temporary exception quietly becomes permanent.
+ *
+ * What it was costing, measured live as the front desk (who holds `read` only):
+ * DELETE and POST both reached the handler. The panel hid the buttons; the API
+ * did not enforce them, so any signed-in staff account could enrol, edit, renew,
+ * take payments on and delete records in its own branch whatever its role said.
+ *
+ * The actions are not uniform. Renew and add-payment ride on `edit`, not
+ * `write`: they change an EXISTING member rather than creating one, and a desk
+ * that may correct a member's details may certainly record the cash that member
+ * just handed over. Gating them on `write` would tie taking payment to the
+ * unrelated right to create records.
  */
 router.get(
   "/member-plans",
@@ -76,11 +90,13 @@ router.get(
 router.post(
   "/members-by-params",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/members", "read"),
   listMembersByParams,
 );
 router.post(
   "/members",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/members", "write"),
   memberUpload,
   createMember,
 );
@@ -92,22 +108,26 @@ router.get(
 router.put(
   "/members/:id",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/members", "edit"),
   memberUpload,
   updateMember,
 );
 router.delete(
   "/members/:id",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/members", "delete"),
   deleteMember,
 );
 router.post(
   "/members/:id/renew",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/members", "edit"),
   renewMembership,
 );
 router.post(
   "/members/:id/payments",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
+  checkPermission("/members", "edit"),
   addPayment,
 );
 
