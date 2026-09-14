@@ -189,18 +189,13 @@ Everything that was on this list as doable has been done and ticked in place
 below. This one item is **new**, found on 2026-09-14 while verifying the login-IP
 entry, and is recorded rather than fixed because it is a separate screen.
 
-- [ ] **The admin login-history view reads three fields nothing writes any
-  more.** `routes/v1/employees.routes.js:236-238` searches on `ipAddress` and
-  `locationCoordinates.{city,country}`, and `:303-307` projects `ipAddress`,
-  `city`, `country`, `latitude`, `longitude`. `models/LoginAttempt.js` has no
-  such paths — the capture was removed with the consent checkboxes — so the
-  screen shows **fossil values for the 11 old rows that still carry them and
-  blanks for every new one**. Not a defect in the login path itself; login,
-  lockout and the audit trail are unaffected. Fix is one of two deliberate
-  choices: re-introduce the capture on purpose, or drop the columns from the
-  view. Do not restore it by accident.
-
----
+- [x] **The admin login-history view read three fields nothing writes** —
+  done. `ipAddress` and `locationCoordinates` left `LoginAttempt` when the
+  consent checkboxes went, but the search clause and two columns survived,
+  matching only the eleven rows written before the removal and silently
+  missing every login since. Server projection, search clause, both columns
+  and the three cell components are all removed; only comments explaining why
+  remain.
 
 ## Decisions
 
