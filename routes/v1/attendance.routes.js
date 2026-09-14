@@ -48,7 +48,22 @@ const router = express.Router();
  * never by a path or body param.
  */
 router.post("/member-portal/attendance/check-in", requireMember, checkIn);
-router.post("/member-portal/attendance/check-out", requireMember, checkOut);
+/**
+ * requirePortalUser, not requireMember — a trainer's shift is an Attendance
+ * row too (same reasoning as /scan below), and without this a trainer's own
+ * checkout tap is rejected before checkOut() ever runs, so every shift closes
+ * only on the 480-minute auto-close sweep (docs/todo.md item 1).
+ *
+ * checkOut() itself decides what "own" means from req.portalUser — never from
+ * req.member — so a trainer can close only a TRAINER row carrying their own
+ * trainerId, and a member only a MEMBER row carrying their own memberId. See
+ * the comment on checkOut() in attendance.controller.js for why that matters.
+ */
+router.post(
+  "/member-portal/attendance/check-out",
+  requirePortalUser,
+  checkOut,
+);
 router.get("/member-portal/attendance/today", requireMember, getToday);
 router.get("/member-portal/attendance", requireMember, listAttendance);
 

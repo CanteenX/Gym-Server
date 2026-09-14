@@ -6,13 +6,19 @@ reason next to them rather than being silently unticked.
 
 Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
-## Status — 2026-09-14
+## Status — 2026-09-14 (updated same day: four items closed below)
 
-**192 ticked · 8 open.** All eight open items are listed once, below, and
-nowhere else — where a phase section used to carry one, it now carries a plain
-pointer, so nothing is counted twice. Nothing open is blocking: **5** need an
-owner decision, **2** are known and accepted, **1** is a small cleanup found
-while verifying this list.
+**195 ticked · 5 open** (was 192 ticked · 8 open earlier today). Three items
+closed under "Open — needs the owner" and "Open — known and accepted" in this
+pass — trainer checkout, video upload, and the `about` pageKey/revalidation
+decision — plus the separate `sectionKey: "seo"` documentation task (not one
+of the original eight, added below its own heading). All closures are
+test-backed: `scripts/tests/attendanceTrainerCheckout.test.mjs` (9),
+`scripts/tests/secureUploadVideo.test.mjs` (19) and
+`scripts/tests/cmsReservedKeys.test.mjs` (7) — `npm run test:unit` is
+**336/336** (was 301/301). Remaining open items are listed once, below, and
+nowhere else. Nothing open is blocking: **3** need an owner decision, **1** is
+known and accepted, **1** is a small cleanup found while verifying this list.
 
 Every phase is built, gated and **deployed**. The production browser gate is
 green (`npm run e2e -- --base https://mid-city-gym.vercel.app`), `npm run
@@ -40,7 +46,82 @@ decisions**, not unshipped work — see "Open — needs the owner" below. The th
 `mid-city-gym.vercel.app` (remote Next builds currently hang — see
 `HANDOFF.md`). Verified against the real database throughout.
 
-### Open — needs the owner (5)
+### Closed 2026-09-14 (this pass)
+
+- [x] **Trainers cannot check out — CLOSED.**
+  `POST /member-portal/attendance/check-out` now runs behind
+  `requirePortalUser`, not `requireMember` (`routes/v1/attendance.routes.js`).
+  `checkOut()` (`controllers/v1/attendance.controller.js`) builds its
+  `Attendance.findOne` filter from `req.portalUser` — `{subjectType:"TRAINER",
+  trainerId}` for a trainer, `{subjectType:"MEMBER", memberId}` for a member —
+  with no default branch, so a trainer's token can only ever match their own
+  TRAINER row and a member's only their own MEMBER row. `check-in` stays
+  `requireMember`, unchanged, on purpose — only the closing half of the
+  product decision this bullet used to describe was actually blocked; opening
+  a shift on someone's behalf was never asked for.
+  `scripts/tests/attendanceTrainerCheckout.test.mjs` — 9 tests, including both
+  cross-subject directions explicitly (a trainer can never close a member's
+  session and vice versa) and that check-in's guard was left untouched.
+- [x] **Video upload is not enabled — CLOSED, for the `media` collection ONLY.**
+  `middlewares/secureUpload.js` gained `ALLOWED_MIMES.video` /
+  `ALLOWED_EXTENSIONS.video` (`.mp4`/`.webm`/`.mov`, matching the bucket) and
+  `FILE_SIZE_LIMITS.video` (50 MB, matching the bucket — NOT applied to
+  images, which stay capped at 5 MB via `checkMediaSizeCap()`), plus
+  `createSecureImageOrVideoUpload()`. It is wired on exactly one route —
+  `POST /site/items/:id/image` — and only when `?slot=video`
+  (`isVideoSlotRequest()`, `routes/v1/site.routes.js`); every other slot
+  (poster, beforeImage, afterImage, none) keeps using the unchanged,
+  images-only uploader. `"video"` is the only `FIELD_SPECS` key named that way
+  (`models/SiteItem.js`, the `media` collection), so this is scoped to that
+  collection by construction, not by convention alone. Magic-byte AND
+  extension are both checked, and must AGREE ON FAMILY
+  (`classifyMediaBuffer()`) — the direct answer to "a file claiming to be
+  .mp4 whose magic bytes say otherwise must still be rejected": a JPEG renamed
+  `clip.mp4` is rejected even though images remain an allowed type on this
+  route, because its content is not the family its extension claimed. `sharp`
+  is never invoked for a detected video (`prepareValidatedMedia()`) — the
+  same corruption risk CLAUDE.md already records for PDFs. Generic uploaders
+  (`createSecureUpload`, `guide.routes.js`, adverts, notices, site-content
+  images) are unchanged and were swept by a regression test.
+  `scripts/tests/secureUploadVideo.test.mjs` — 19 tests, magic bytes proven
+  against REAL, hand-built minimal mp4/webm/mov container headers (verified
+  against the installed `file-type` package, not mocked), including a real
+  sharp WebP round-trip for the image path (RIFF/WEBP signature asserted on
+  the output bytes).
+- [x] **`pageKey: "about"` — decision recorded, not an accident. CLOSED.**
+  Verified 2026-09-14: `Gym-frontend/src/app/internal/revalidate/route.ts`
+  already maps `about: "/"` in its own `PAGE_PATHS` table, with its own
+  comment explaining why ("about" has no page of its own — its blocks render
+  inside the home page). That is the frontend half of this decision and it was
+  already explicit, not guessed at; nothing there needed changing. The
+  server-side gap was that `config/cmsMenus.js` documented `about` as
+  RESERVED without saying anything about revalidation, so this pass added
+  that cross-reference and a pinning test for the server's own contract:
+  editing the LIVE about content (`pageKey:"home", sectionKey:"about"`, seeded
+  and real) revalidates `{pageKey:"home"}` — the page a visitor actually
+  sees — and a future standalone `pageKey:"about"` row would revalidate
+  `{pageKey:"about"}` unchanged, matching the frontend's existing fallback.
+  `scripts/tests/cmsReservedKeys.test.mjs` — 3 of its 7 tests cover this.
+  Whether the owner ever wants About to become its own route is unchanged and
+  still open — see below.
+
+### `sectionKey: "seo"` — formalised and pinned (separate from the eight above)
+
+- [x] **CLOSED.** Not one of the original eight open items — the "undocumented"
+  framing was already stale (see the retire-or-keep bullet below) — but the
+  task of formally documenting the key was not actually done server-side until
+  now. `config/cmsMenus.js` gained `SEO_FALLBACK_SECTION_KEY = "seo"` with the
+  full contract (which two fields — `title` -> meta title, `body` -> meta
+  description, NOT `subtitle` — a page it applies to, and the all-or-nothing
+  precedence against `SeoMeta`), cross-referenced from
+  `models/SiteContent.js`'s `sectionKey` field. `EDITABLE_FIELDS` in
+  `controllers/v1/siteContent.controller.js` is now exported specifically so
+  the pinning test can catch a rename of `title`/`body` before it silently
+  breaks `Gym-frontend/src/lib/seo.ts`. `scripts/tests/cmsReservedKeys.test.mjs`
+  — 4 of its 7 tests, including a schema-level `validateSync()` proving nothing
+  server-side rejects or special-cases the key.
+
+### Open — needs the owner (3, was 5)
 
 These are decisions, not work. Each is blocked on a judgement nobody here is
 entitled to make; none of them is being guessed at.
@@ -57,38 +138,36 @@ entitled to make; none of them is being guessed at.
   only, and the script says so in a comment. A super admin needs no grant
   (`checkPermission` short-circuits for `role === "ADMIN"`). Nothing is broken
   — the capability exists and is simply not handed out.
-- [ ] **Does the site want a standalone `/about` page?** `pageKey: "about"` is
-  documented as RESERVED in `config/cmsMenus.js` and currently holds **0 rows**
-  (checked 2026-09-14) — "about" is a *section* on the home page (`home/about`),
-  not a page. The `/cms/about` screen therefore opens empty and the revalidation
-  hook maps the key to `/`. That is correct for today. It only needs deciding if
-  the owner wants About to become its own route.
-- [ ] **Retire the `sectionKey: "seo"` fallback layer?** The "undocumented"
-  framing is stale: precedence was formalised in Phase 2 and is documented at
-  length in `Gym-frontend/src/lib/seo.ts:11-31` — `SeoMeta` wins all-or-nothing,
-  `seo` rows are the fallback, shipped constants are last. Checked 2026-09-14:
-  **0 `sectionKey: "seo"` rows exist** and all three marketing routes have a
-  `SeoMeta` row, so the fallback is already dead in practice. Deleting the layer
-  is a deliberate removal, not a fix.
-- [ ] **Trainers cannot check out.** `/member-portal/attendance/check-out` is
-  `requireMember` by design (verified in `routes/v1/attendance.routes.js:51`),
-  so a trainer's shift closes on the 480-minute sweep. The screen says so rather
-  than hiding a missing button. Widening it is a product decision about whether
-  a trainer's shift length should be self-reported at all.
+  **Recommendation, recorded 2026-09-14, RBAC baseline NOT changed:** do not
+  bake a default `edit` grant into any seed/repair script. `checkPermission("/
+  attendance-overview", "edit")` gates `POST /attendance/:id/mark-allowed`,
+  which reverses a system refusal (`EXPIRED`/`PAYMENT_DUE`) in a member's
+  favour, usually with money behind it — the failure mode of under-granting it
+  is a phone call to whoever holds it; the failure mode of over-granting it is
+  silent, branch-wide revenue leakage with an audit trail nobody reviews until
+  asked to. `RoleMaster` rows are owner-named and discovered from live staff
+  data (`scripts/seedBranchRolePermissions.js`), not a fixed enum — there is no
+  single "Front Desk" role this codebase can identify generically, so any
+  seeded default would be a guess dressed as a policy. The mechanism to grant
+  it correctly already exists and already reaches the right screen — the super
+  admin ticks `edit` for the specific role(s) that staff each branch's desk on
+  the Employee Roles screen — so the honest description of this item is "no
+  code is missing", not "unimplemented". Left for the owner: naming which
+  role(s), per branch, actually run the desk.
+- [ ] **Retire the `sectionKey: "seo"` fallback layer?** Now formally documented
+  and pinned server-side (`SEO_FALLBACK_SECTION_KEY`, see above) — the
+  remaining question is unchanged and is a different one: whether to DELETE the
+  fallback now that it is dead in practice. Precedence was formalised in
+  Phase 2 and is documented at length in `Gym-frontend/src/lib/seo.ts:11-31` —
+  `SeoMeta` wins all-or-nothing, `seo` rows are the fallback, shipped constants
+  are last. Checked 2026-09-14: **0 `sectionKey: "seo"` rows exist** and all
+  three marketing routes have a `SeoMeta` row, so the fallback is already dead
+  in practice. Deleting the layer is a deliberate removal, not a fix.
 
-### Open — known and accepted (2)
+### Open — known and accepted (1, was 2)
 
 Being handled elsewhere or consciously not done. Not defects to re-litigate.
 
-- [ ] **Video upload is not enabled**, in the bucket *or* through `/cms/media`.
-  These are one item seen from two ends. The `gym-uploads` bucket accepts
-  mp4/webm/mov (and holds two `.mp4` files the migration script put there), but
-  `middlewares/secureUpload.js` allows images and PDF only — verified
-  2026-09-14: `ALLOWED_EXTENSIONS.all` is `.jpg .jpeg .png .gif .webp .ico .pdf`
-  with 5 MB / 10 MB caps. So `/cms/media` takes a **pasted URL**, and the field
-  hint says so in the UI. Enabling upload means widening the allowlist,
-  extending the magic-byte check, raising the cap and keeping `sharp` off for
-  video — a deliberate change, not part of the storage wiring.
 - [ ] **React #418 (recoverable hydration error) on the marketing home page.**
   One error, home only; `/programs` and `/contact` are clean — they used to
   throw it too, so earlier work removed two of three. One genuine cause was
@@ -371,7 +450,7 @@ Commits: `4f3b31f` (server) · `87baa69` (admin) · `71a944a` (portal)
 - [x] Browser: **GATE PASSED**, 42 checks
 
 Known limits, by design:
-- Trainers cannot check out — re-verified 2026-09-14 (`routes/v1/attendance.routes.js:51`, `requireMember`), so a shift closes on the 480-minute sweep and the screen says so rather than hiding a missing button. Widening it is a product decision, so it now lives in **"Open — needs the owner"** at the top of this file rather than reading like unshipped work here
+- [x] ~~Trainers cannot check out~~ — CLOSED 2026-09-14. See "Closed 2026-09-14 (this pass)" at the top of this file for the implementation and the 9 tests.
 - [x] ~~Denied scans surface only through the export~~ — CLOSED. `/attendance/live` now returns a `denials[]` array alongside `sessions[]`. Footfall still excludes them, and always will: a refusal is not an arrival
 
 ---
@@ -609,9 +688,8 @@ can be allowed to edit FAQs without being able to touch pricing.
   unauthenticated (HTTP 401) and there is no env-listing tool. The evidence above
   is behavioural, and it is strong, but it is inference from a stored object, not
   a screenshot of the project settings
-- Video upload is still not enabled — unchanged and **accepted**. Re-verified
-  2026-09-14 and tracked once, with the `/cms/media` half of the same problem,
-  under "Open — known and accepted" at the top of this file
+- [x] ~~Video upload is still not enabled~~ — CLOSED 2026-09-14, for the `media`
+  collection only. See "Closed 2026-09-14 (this pass)" at the top of this file.
 - [x] Migrate existing Blob / local rows into the bucket — **done**, and it
   turned out to matter more than "optional": the rows were hotlinks to
   `images.unsplash.com` and `videos.pexels.com`, i.e. a third party's server on
@@ -641,9 +719,11 @@ can be allowed to edit FAQs without being able to touch pricing.
 - [x] `site.ts` remains the fallback for every key. A row that is missing,
   inactive or malformed falls back per row; if that empties a list, the whole
   list falls back.
-- Video cannot be uploaded through `/cms/media` — the field takes a pasted URL,
-  and the field hint says so in the UI. This is the same item as the bucket-side
-  note in the Supabase section; both are tracked **once**, under "Open — known
+- [x] ~~Video cannot be uploaded through `/cms/media`~~ — CLOSED 2026-09-14. See
+  "Closed 2026-09-14 (this pass)" at the top of this file. Original note: the
+  field took a pasted URL, and the field hint said so in the UI. This was the
+  same item as the bucket-side note in the Supabase section; both were tracked
+  **once**, under "Open — known
   and accepted" at the top of this file.
 - Branch street addresses, postal codes and map pins are declared and parsed but
   empty — nothing was invented, per the owner's recorded decision. Supplying them

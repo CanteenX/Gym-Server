@@ -15,7 +15,12 @@ import {
 } from "../../middlewares/cmsPermission.js";
 import { authRateLimiter, uploadRateLimiter } from "../../middlewares/rateLimiter.js";
 import { createLeadValidation } from "../../middlewares/inputValidator.js";
-import { createSecureImageUpload } from "../../middlewares/secureUpload.js";
+import {
+  createSecureImageUpload,
+  createSecureImageOrVideoUpload,
+  isVideoSlotRequest,
+  FILE_SIZE_LIMITS,
+} from "../../middlewares/secureUpload.js";
 import { ensureLocalDir } from "../../config/runtime.js";
 import {
   getPublicSiteContent,
@@ -161,6 +166,44 @@ const secureItemImageUpload = createSecureImageUpload({
   compress: true,
   quality: 85,
 });
+
+/**
+ * VIDEO, ENABLED FOR THE `media` COLLECTION'S `video` SLOT ONLY (docs/todo.md
+ * item 2). Same folder as the image uploader above — they never share a
+ * route, so one folder per uploader is not required here the way it is
+ * across the four DIFFERENT destinations elsewhere in this file.
+ *
+ * Every other slot (poster, beforeImage, afterImage, or no slot at all)
+ * keeps going through secureItemImageUpload above, images only, byte-for-byte
+ * unchanged. See isVideoSlotRequest() below for the one switch that decides
+ * which of the two runs.
+ */
+const secureItemMediaUpload = createSecureImageOrVideoUpload({
+  destination: itemImageUploadDir,
+  fieldName: "image",
+  imageMaxSize: 5 * 1024 * 1024,
+  videoMaxSize: FILE_SIZE_LIMITS.video,
+  compress: true,
+  quality: 85,
+});
+
+/**
+ * Picks the uploader BEFORE multer touches the request — isVideoSlotRequest
+ * reads req.query, which Express has already parsed regardless of the
+ * multipart body, so this decision does not depend on field order inside the
+ * form the way reading req.body.slot here would.
+ *
+ * THIS IS THE ONLY PLACE VIDEO CAN REACH THE FILESYSTEM/BUCKET. No other
+ * route in this file, or in the codebase, wires createSecureImageOrVideoUpload
+ * — widening video support elsewhere means adding another call to it, not
+ * touching this one.
+ */
+const secureItemImageOrVideoUpload = (req, res, next) => {
+  const uploader = isVideoSlotRequest(req)
+    ? secureItemMediaUpload
+    : secureItemImageUpload;
+  return uploader(req, res, next);
+};
 
 const noticeImageUploadDir = "uploads/cms/notices";
 ensureLocalDir(noticeImageUploadDir);
@@ -475,7 +518,7 @@ router.post(
   authMiddleware(["ADMIN", "EMPLOYEE"]),
   cmsPermission("edit", siteItemDocTargets),
   uploadRateLimiter,
-  secureItemImageUpload,
+  secureItemImageOrVideoUpload,
   uploadSiteItemImage,
 );
 router.delete(

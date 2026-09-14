@@ -34,7 +34,17 @@ const SiteContentSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
     },
-    /** Which block on that page, e.g. "hero" | "features" | "cta". */
+    /**
+     * Which block on that page, e.g. "hero" | "features" | "cta".
+     *
+     * One value is reserved rather than free-form: `"seo"` — see
+     * `SEO_FALLBACK_SECTION_KEY` in config/cmsMenus.js for the full contract
+     * (which two fields it reads and why). Nothing in this schema or in the
+     * controllers enforces that contract; it is enforced only by the two
+     * field names agreeing with what Gym-frontend reads, which is exactly why
+     * it is written down there and pinned by
+     * scripts/tests/cmsReservedKeys.test.mjs.
+     */
     sectionKey: {
       type: String,
       required: true,

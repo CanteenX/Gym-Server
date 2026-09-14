@@ -208,17 +208,38 @@ export const checkIn = async (req, res) => {
 };
 
 /**
- * End today's session.
+ * End today's session — a member's, OR a trainer's shift (docs/todo.md item 1).
  *
- * Deliberately does NOT sweep stale sessions first: if the member is tapping
+ * Deliberately does NOT sweep stale sessions first: if the subject is tapping
  * out late, their real tap is better data than the reconstruction, so let it
  * win.
+ *
+ * ============================================================================
+ * req.portalUser IS THE ONLY THING THIS HANDLER MAY KEY OFF. NOT req.member.
+ * ============================================================================
+ * Behind requirePortalUser, so req.portalUser.subjectType is the verified
+ * token claim — a trainer's token is validly signed with the same key a
+ * member's is, so the signature alone proves nothing about whose row this is.
+ * The filter below is built from that claim's OWN id, on the matching field
+ * (trainerId for a TRAINER, memberId for a MEMBER), so:
+ *   - a trainer's request can only ever match a TRAINER row carrying their own
+ *     trainerId — never a member's row, and never another trainer's shift,
+ *   - a member's request can only ever match a MEMBER row carrying their own
+ *     memberId — exactly the behaviour this handler always had.
+ * Getting this filter wrong the other way (e.g. defaulting to memberId when
+ * subjectType is unrecognised) would let a trainer close a member's session;
+ * there is deliberately no default branch.
  */
 export const checkOut = async (req, res) => {
   try {
+    const { id, subjectType } = req.portalUser;
+    const ownerFilter =
+      subjectType === "TRAINER"
+        ? { subjectType: "TRAINER", trainerId: id }
+        : { subjectType: "MEMBER", memberId: id };
+
     const session = await Attendance.findOne({
-      subjectType: "MEMBER",
-      memberId: req.member.id,
+      ...ownerFilter,
       date: startOfDay(),
       checkOutAt: null,
       // A refused scan is a closed row with a reason on it, never an open

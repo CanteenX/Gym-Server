@@ -59,10 +59,22 @@ export const DANGEROUS_EXTENSIONS_REGEX =
 
 /**
  * Allowed MIME types for different file categories
+ *
+ * `video` is intentionally its OWN category, not folded into `all`: `all` is
+ * the generic upload allowlist used by guide.routes.js and the generic
+ * createSecureUpload() factory, and neither of those should silently start
+ * accepting video just because the bucket does. Only
+ * createSecureImageOrVideoUpload() — wired to exactly one route, the media
+ * collection's `video` slot — reads ALLOWED_MIMES.video at all (docs/todo.md
+ * item 2: "media collection ONLY").
  */
 export const ALLOWED_MIMES = {
   images: ["image/jpeg", "image/png", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon"],
   documents: ["application/pdf"],
+  // Matches the Supabase bucket's existing MIME allowlist (docs/todo.md,
+  // "Supabase storage for uploads") — the bucket already accepts these three,
+  // the server just never let anything reach it.
+  video: ["video/mp4", "video/webm", "video/quicktime"],
   all: [
     "image/jpeg",
     "image/png",
@@ -80,6 +92,10 @@ export const ALLOWED_MIMES = {
 export const ALLOWED_EXTENSIONS = {
   images: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".ico"],
   documents: [".pdf"],
+  // .mov, not .qt — the brand file-type reports for a QuickTime container is
+  // `video/quicktime`, and every real-world export from a phone or editor
+  // uses .mov, so that is the extension staff will actually type at.
+  video: [".mp4", ".webm", ".mov"],
   all: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".ico", ".pdf"],
 };
 
@@ -90,6 +106,11 @@ export const FILE_SIZE_LIMITS = {
   image: 5 * 1024 * 1024, // 5 MB
   document: 10 * 1024 * 1024, // 10 MB
   default: 5 * 1024 * 1024, // 5 MB
+  // Matches the Supabase bucket's own 50 MB cap. Deliberately NOT the image
+  // cap raised for everyone — see checkMediaSizeCap(), which applies this only
+  // to a buffer whose DETECTED type is video; an image uploaded through the
+  // same route still has to fit in FILE_SIZE_LIMITS.image.
+  video: 50 * 1024 * 1024,
 };
 
 // ============ HELPER FUNCTIONS ============
@@ -180,6 +201,275 @@ async function validateBufferMagicBytes(buffer, allowedMimes) {
   } catch (error) {
     return { valid: false, detected: null, error: error.message };
   }
+}
+
+// ============ MEDIA (IMAGE + VIDEO) — media collection ONLY ============
+//
+// docs/todo.md item 2. Everything below is used by exactly ONE route —
+// the SiteItem image upload, and only when ?slot=video (site.routes.js) —
+// so widening ALLOWED_EXTENSIONS.images/all itself, which every OTHER
+// uploader in this file reads, would have been the wrong lever.
+
+/** "video" | "image" | null, from an extension the client's filename claims. */
+const familyOfExt = (ext) => {
+  if (ALLOWED_EXTENSIONS.video.includes(ext)) return "video";
+  if (ALLOWED_EXTENSIONS.images.includes(ext)) return "image";
+  return null;
+};
+
+/** "video" | "image" | null, from a magic-byte-DETECTED mime type. */
+const familyOfMime = (mime) => {
+  if (!mime) return null;
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("image/")) return "image";
+  return null;
+};
+
+/**
+ * Validates an uploaded (image OR video) buffer against BOTH its claimed
+ * extension and its actual magic bytes, and — the check a plain "is the
+ * detected type somewhere in the allowlist" test would miss — that the two
+ * AGREE ON FAMILY.
+ *
+ * WHY THE FAMILY CHECK, SPECIFICALLY: once video and image mimes are both
+ * accepted on one route, a JPEG renamed "clip.mp4" is not rejected by "is
+ * image/jpeg an allowed mime" — it is, images are still allowed here. It has
+ * to be rejected because the field claiming to be a VIDEO turned out to hold
+ * an image, which `validateBufferMagicBytes` alone cannot express. This is
+ * the direct answer to docs/todo.md's "a file claiming to be .mp4 whose magic
+ * bytes say otherwise must still be rejected".
+ *
+ * @param {Buffer} buffer
+ * @param {string} originalname - the client's filename, for its extension
+ * @returns {Promise<{valid:boolean, category?:'image'|'video', mime?:string, ext?:string, error?:string}>}
+ */
+export async function classifyMediaBuffer(buffer, originalname) {
+  const ext = path.extname(String(originalname || "").toLowerCase());
+  const claimedFamily = familyOfExt(ext);
+
+  if (!claimedFamily) {
+    return {
+      valid: false,
+      error: `Unsupported extension "${ext}". Allowed: ${[
+        ...ALLOWED_EXTENSIONS.images,
+        ...ALLOWED_EXTENSIONS.video,
+      ].join(", ")}`,
+    };
+  }
+
+  const validation = await validateBufferMagicBytes(buffer, [
+    ...ALLOWED_MIMES.images,
+    ...ALLOWED_MIMES.video,
+  ]);
+  if (!validation.valid) {
+    return { valid: false, error: validation.error || "Invalid file type" };
+  }
+
+  const detectedFamily = familyOfMime(validation.detected);
+  if (detectedFamily !== claimedFamily) {
+    return {
+      valid: false,
+      error: `File extension "${ext}" does not match its actual content (detected: ${validation.detected || "unknown"}).`,
+    };
+  }
+
+  return { valid: true, category: detectedFamily, mime: validation.detected, ext };
+}
+
+/**
+ * Per-category size cap. THE POINT OF THIS BEING SEPARATE FROM MULTER'S OWN
+ * `limits.fileSize`: multer's ceiling is a single number, checked before the
+ * real type is known, so it is set to the LARGER of the two caps (video) so a
+ * legitimate video is never truncated mid-stream. This function then applies
+ * the SMALLER cap retroactively to anything that turns out to be an image —
+ * which is what keeps the 5 MB image limit real instead of quietly becoming
+ * 50 MB for everyone the day video was enabled.
+ *
+ * @param {number} byteLength
+ * @param {'image'|'video'} category
+ * @param {{imageMaxSize:number, videoMaxSize:number}} caps
+ * @returns {{ok:boolean, cap:number}}
+ */
+export function checkMediaSizeCap(byteLength, category, caps) {
+  const cap = category === "video" ? caps.videoMaxSize : caps.imageMaxSize;
+  return { ok: byteLength <= cap, cap };
+}
+
+/**
+ * Produces the bytes actually handed to persistBuffer() for one validated
+ * file.
+ *
+ * ============================================================================
+ * VIDEO IS NEVER HANDED TO SHARP. NOT "SHARP WITH COMPRESSION OFF" — SKIPPED.
+ * ============================================================================
+ * Sharp decodes image containers; a video container is not one, and CLAUDE.md
+ * already records this exact failure mode for PDFs run through the shared
+ * WebP compressor — it does not politely no-op, it corrupts the file. The
+ * `compress` option below therefore has NO EFFECT on a video buffer: it is
+ * read only when category is "image".
+ *
+ * @param {Buffer} buffer - already validated by classifyMediaBuffer
+ * @param {'image'|'video'} category
+ * @param {string} mime - the detected mime from classifyMediaBuffer
+ * @param {string} ext - the detected extension from classifyMediaBuffer
+ * @param {{compress?:boolean, quality?:number}} [options]
+ * @returns {Promise<{buffer:Buffer, mime:string, ext:string}>}
+ */
+export async function prepareValidatedMedia(buffer, category, mime, ext, options = {}) {
+  if (category === "video") {
+    return { buffer, mime, ext };
+  }
+
+  const { compress = true, quality = 85 } = options;
+  if (compress && (await ensureSharp())) {
+    const webp = await compressToWebP(buffer, { quality });
+    return { buffer: webp, mime: "image/webp", ext: ".webp" };
+  }
+  return { buffer, mime, ext };
+}
+
+/**
+ * True only when the request is asking for the ONE slot video is enabled on.
+ * Deliberately reads req.query, not req.body: multer has not parsed the
+ * multipart body yet at the point site.routes.js needs this answer (it picks
+ * which multer instance to run), and the admin's upload call already sends
+ * `slot` on the query string for exactly this reason (see
+ * uploadSiteItemImage's own comment on where `slot` may come from).
+ *
+ * @param {{query?: Record<string, unknown>}} req
+ * @returns {boolean}
+ */
+export const isVideoSlotRequest = (req) => req?.query?.slot === "video";
+
+/**
+ * Create secure upload middleware for a route that accepts EITHER an image OR
+ * a video — used for exactly one route, the media collection's `video` slot
+ * (site.routes.js), never mounted anywhere generic.
+ *
+ * Mirrors createSecureImageUpload's shape (same error codes, same
+ * req.file.path/size/mimetype contract) so the controller downstream
+ * (uploadSiteItemImage) needed no change at all.
+ *
+ * @param {object} options
+ * @returns {Function} Express middleware
+ */
+export function createSecureImageOrVideoUpload(options = {}) {
+  const {
+    destination = "uploads",
+    fieldName = "file",
+    imageMaxSize = FILE_SIZE_LIMITS.image,
+    videoMaxSize = FILE_SIZE_LIMITS.video,
+    compress = true,
+    quality = 85,
+  } = options;
+
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    fileFilter: createFileFilter(
+      [...ALLOWED_MIMES.images, ...ALLOWED_MIMES.video],
+      [...ALLOWED_EXTENSIONS.images, ...ALLOWED_EXTENSIONS.video],
+    ),
+    // The larger of the two caps — see checkMediaSizeCap() for why the
+    // smaller (image) cap is enforced AFTER classification instead.
+    limits: { fileSize: videoMaxSize },
+  });
+
+  return (req, res, next) => {
+    const uploader = upload.single(fieldName);
+
+    uploader(req, res, async (err) => {
+      if (err) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({
+            isOk: false,
+            status: 400,
+            error: "File Too Large",
+            message: `File size exceeds ${videoMaxSize / (1024 * 1024)}MB limit`,
+          });
+        }
+        return res.status(400).json({
+          isOk: false,
+          status: 400,
+          error: "Upload Error",
+          message: err.message,
+        });
+      }
+
+      if (!req.file) {
+        return next();
+      }
+
+      try {
+        const classified = await classifyMediaBuffer(
+          req.file.buffer,
+          req.file.originalname,
+        );
+        if (!classified.valid) {
+          console.warn(
+            `[SECURITY] Media validation failed for upload: ${classified.error}`,
+          );
+          return res.status(400).json({
+            isOk: false,
+            status: 400,
+            error: "Security Validation Failed",
+            message: classified.error || "Invalid file type",
+          });
+        }
+
+        const sizeCheck = checkMediaSizeCap(
+          req.file.buffer.length,
+          classified.category,
+          { imageMaxSize, videoMaxSize },
+        );
+        if (!sizeCheck.ok) {
+          return res.status(400).json({
+            isOk: false,
+            status: 400,
+            error: "File Too Large",
+            message: `File size exceeds ${(sizeCheck.cap / (1024 * 1024)).toFixed(0)}MB limit for ${classified.category}`,
+          });
+        }
+
+        const prepared = await prepareValidatedMedia(
+          req.file.buffer,
+          classified.category,
+          classified.mime,
+          classified.ext,
+          { compress, quality },
+        );
+
+        if (!IS_SERVERLESS) await ensureUploadDir(destination);
+        const secureFilename = generateSecureFilename(
+          req.file.originalname,
+          prepared.ext,
+        );
+        const filePath = await persistBuffer(
+          prepared.buffer,
+          secureFilename,
+          prepared.mime,
+          destination,
+        );
+
+        req.file.filename = secureFilename;
+        req.file.path = filePath;
+        req.file.size = prepared.buffer.length;
+        req.file.mimetype = prepared.mime;
+        req.file.isVideo = classified.category === "video";
+        req.file.originalSize = req.file.buffer.length;
+
+        delete req.file.buffer;
+        next();
+      } catch (error) {
+        console.error("[UPLOAD] Media processing error:", error.message);
+        return res.status(500).json({
+          isOk: false,
+          status: 500,
+          error: "Processing Error",
+          message: "Failed to process uploaded file",
+        });
+      }
+    });
+  };
 }
 
 /**
@@ -795,8 +1085,13 @@ export default {
   createSecureDocumentUpload,
   createSecureUpload,
   createSecureMultiUpload,
+  createSecureImageOrVideoUpload,
   ALLOWED_MIMES,
   ALLOWED_EXTENSIONS,
   FILE_SIZE_LIMITS,
   DANGEROUS_EXTENSIONS_REGEX,
+  classifyMediaBuffer,
+  prepareValidatedMedia,
+  checkMediaSizeCap,
+  isVideoSlotRequest,
 };

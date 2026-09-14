@@ -7,8 +7,20 @@ import SiteContent from "../../models/SiteContent.js";
 const escapeRegex = (str = "") =>
   str.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
-/** Fields a client may set. Anything else in the body is ignored, not echoed. */
-const EDITABLE_FIELDS = [
+/**
+ * Fields a client may set. Anything else in the body is ignored, not echoed.
+ *
+ * EXPORTED, not just internal, because `title` and `body` carry a SECOND
+ * contract beyond ordinary block copy: on a row with
+ * `sectionKey: "seo"` (config/cmsMenus.js SEO_FALLBACK_SECTION_KEY),
+ * Gym-frontend/src/lib/seo.ts reads them as the fallback meta title and meta
+ * description (docs/todo.md item 4). Renaming or dropping either name here
+ * would silently break that fallback with no error on this side — the site
+ * would just stop offering a title/description for any page still relying on
+ * it. scripts/tests/cmsReservedKeys.test.mjs pins both names for exactly that
+ * reason.
+ */
+export const EDITABLE_FIELDS = [
   "title",
   "subtitle",
   "body",

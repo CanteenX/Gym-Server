@@ -52,15 +52,32 @@ export const CMS_FALLBACK_MENU_URL = "/website-pages";
  * Not every key here has rows today; the ones that do not are RESERVED so that
  * the day the owner adds prose to that page, its permission is already the
  * right one:
- *   home      seeded: hero, about, cta
- *   programs  seeded: header, cta
- *   contact   seeded: header, form, cta
+ *   home      seeded: hero, about, cta, seo
+ *   programs  seeded: header, cta, seo
+ *   contact   seeded: header, form, cta, seo
  *   header    seeded by this change: brand, cta
  *   footer    seeded by this change: brand, explore, branches, legal
  *   social    seeded by this change: one row per network
- *   about     RESERVED — "about" is a section on the home page today
- *             (home/about), not a page of its own, so an /cms/about screen
- *             opens empty until somebody creates about/* rows
+ *   about     RESERVED, AND THE REVALIDATION MAPPING IS A DECISION, NOT AN
+ *             ACCIDENT (docs/todo.md item 1/3, checked 2026-09-14):
+ *             "about" is a SECTION on the home page today (`home/about`,
+ *             seeded and live), not a page of its own — an /cms/about screen
+ *             opens empty until somebody creates `about/*` rows. Two
+ *             consequences follow, on the two sides that own them:
+ *               - THIS SERVER just passes `pageKey` through to
+ *                 services/siteRevalidate.js verbatim, for both cases —
+ *                 editing the live `home/about` section revalidates with
+ *                 `{ pageKey: "home" }` (the page that actually renders it),
+ *                 and editing a future standalone `about/*` row would
+ *                 revalidate with `{ pageKey: "about" }` unchanged.
+ *               - Gym-frontend/src/app/internal/revalidate/route.ts owns what
+ *                 a bare `{ pageKey: "about" }` resolves to on the public
+ *                 site, and maps it to `"/"` there, explicitly and with its
+ *                 own comment — not silently, and not this server's call to
+ *                 make, since the server has no page-to-route table at all.
+ *             scripts/tests/cmsReservedKeys.test.mjs pins the server half:
+ *             that editing `home/about` revalidates `"home"`, i.e. the page a
+ *             visitor actually sees today.
  *   pricing   RESERVED — the pricing table is a SiteItem list ("plans"), and
  *             the page carries no prose block of its own yet
  *   faqs      RESERVED — same shape as pricing
@@ -85,6 +102,42 @@ export const CMS_PAGE_MENUS = Object.freeze({
   social: "/cms/social",
   site: "/cms/site",
 });
+
+/**
+ * THE RESERVED sectionKey THAT DRIVES META TITLE/DESCRIPTION, FORMALISED
+ * (docs/todo.md item 2/4, was "undocumented" — checked 2026-09-14).
+ *
+ * A `SiteContent` row with `pageKey: <home|programs|contact>` and
+ * `sectionKey: SEO_FALLBACK_SECTION_KEY` is not ordinary block copy: it is a
+ * FALLBACK SEO SOURCE, read directly by Gym-frontend
+ * (`src/lib/seo.ts:11-31`, `buildPageMetadata()`) beneath the page-wise
+ * `SeoMeta` manager (`/seo-manager`) and above the constants shipped in each
+ * page file. The precedence is all-or-nothing between the two CMS layers —
+ * SeoMeta wins completely the moment either of its fields is set, so a page
+ * can never take its title from one editor and its description from the
+ * other — but never between a CMS layer and the shipped copy, which is
+ * always the floor.
+ *
+ * THE TWO FIELDS THAT CARRY THE CONTRACT, on that row specifically:
+ *   title -> fallback <title> / og:title
+ *   body  -> fallback meta description / og:description
+ * (`subtitle` is NOT part of this contract — an easy field to reach for by
+ * name and the wrong one.) Both are ordinary `SiteContent.EDITABLE_FIELDS`
+ * (controllers/v1/siteContent.controller.js), so nothing server-side treats
+ * this row specially — the entire contract lives in the sectionKey string and
+ * the two field names agreeing with what Gym-frontend reads. Renaming
+ * `title`/`body` there, or renaming this constant, breaks the fallback with
+ * NO error on this side: the site just quietly stops offering a
+ * title/description for whichever pages still rely on it.
+ * scripts/tests/cmsReservedKeys.test.mjs pins all three (the key string, and
+ * that both field names still exist on EDITABLE_FIELDS).
+ *
+ * Known live usage (checked 2026-09-14): 0 `sectionKey: "seo"` rows exist —
+ * every marketing route already has its own `SeoMeta` row, so the fallback is
+ * dead in practice but is NOT retired here; that is a separate, owner-level
+ * removal decision (docs/todo.md, "Open — needs the owner"), not a defect.
+ */
+export const SEO_FALLBACK_SECTION_KEY = "seo";
 
 /**
  * SiteItem.collectionKey → menu URL.
