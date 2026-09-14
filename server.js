@@ -394,6 +394,7 @@ import reportRoutes from "./routes/v1/reports.routes.js";
 import auditLogRoutes from "./routes/v1/auditLog.routes.js";
 import classRoutes from "./routes/v1/classes.routes.js";
 import jobRoutes from "./routes/v1/jobs.routes.js";
+import holidayRoutes from "./routes/v1/holidays.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -438,6 +439,10 @@ app.use("/api/v1", classRoutes);
 // secret in CRON_SECRET is the whole of its authentication, see
 // controllers/v1/jobs.controller.js.
 app.use("/api/v1", jobRoutes);
+// Holiday Master: staff CRUD/calendar + the read-only member-portal widget.
+// Same flat mount as everything else, and it must stay under /api/ or the
+// SPA catch-all below swallows it.
+app.use("/api/v1", holidayRoutes);
 
 console.log("✅ V1 API routes loaded");
 

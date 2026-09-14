@@ -147,6 +147,23 @@ export const SUPER_ADMIN_EMAIL = "nventra@gmail.com";
  */
 export const RECONCILED_FLAGS_URL = "/attendance-overview";
 
+/**
+ * `/holiday-master` DELIBERATELY DOES NOT JOIN RECONCILED_FLAGS_URL.
+ *
+ * Reconciliation exists to fix an EXISTING row whose flags were baselined
+ * wrong before the owner's decision was known — /attendance-overview's `edit`
+ * was granted to staff after rows already existed with read-only, so top-up
+ * alone (which only ever ADDS a missing URL, never touches a URL that is
+ * already present) could never repair it. /holiday-master has no such
+ * history: it is a brand-new URL, so on every role's first run
+ * planBaselineTopUp() finds it MISSING and adds it with the correct flags for
+ * that tier from the start. There is nothing to reconcile. If a future change
+ * narrows or widens the holiday-master baseline after rows already exist, add
+ * it here at that point — not pre-emptively now, which would mean this
+ * script silently overwrites a flag the owner tuned by hand for no reason
+ * that applies yet.
+ */
+
 export const RESERVED_TO_SUPER_ADMIN = [
   "/audit-log",
   "/seo-manager",
@@ -253,6 +270,13 @@ export const TIER_BASELINES = {
     // Documentation, not administration. Both tiers keep it.
     "/guides-gallery": grant("read"),
     "/manage-guides": grant("read", "write", "edit"),
+    /**
+     * Full CRUD, matching the owner's explicit instruction: SUPER ADMIN and
+     * branch ADMINS may mark/edit/remove their own branch's closures (and see
+     * the all-branches ones — enforced server-side by
+     * services/holidayScope.js, not by this flag set).
+     */
+    "/holiday-master": grant("read", "write", "edit", "delete"),
   },
   /**
    * The front desk. Sees the people in front of it and the day's attendance,
@@ -289,6 +313,16 @@ export const TIER_BASELINES = {
      */
     "/attendance-overview": grant("read", "edit"),
     "/guides-gallery": grant("read"),
+    /**
+     * READ ONLY. The owner's own words: "basically it's just checkbox
+     * unchecked" — the front desk sees the Holiday Master screen and the
+     * calendar so they can answer "are we open Saturday?", but may not
+     * add/edit/remove a closure. write/edit/delete are deliberately absent
+     * rather than present-and-false; TIER_BASELINES only ever grants what is
+     * listed, never assumes an unlisted flag defaults to denied by some other
+     * mechanism.
+     */
+    "/holiday-master": grant("read"),
   },
 };
 
