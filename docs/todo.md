@@ -132,7 +132,7 @@ entitled to make; none of them is being guessed at.
   recorded decision is that **nothing is invented** — the JSON-LD publishes only
   real data (name, phone, locality, region, country, per-branch opening hours).
   Supplying the real values fills the keys with no other change.
-- [ ] **Grant `edit` on `/attendance-overview` to whichever role runs the front
+- [x] **Grant `edit` on `/attendance-overview` to whichever role runs the front
   desk.** A policy choice about who may override a denied scan.
   `scripts/seedInsightsMenus.js --grant-all` deliberately still grants read
   only, and the script says so in a comment. A super admin needs no grant
@@ -154,7 +154,15 @@ entitled to make; none of them is being guessed at.
   the Employee Roles screen — so the honest description of this item is "no
   code is missing", not "unimplemented". Left for the owner: naming which
   role(s), per branch, actually run the desk.
-- [ ] **Retire the `sectionKey: "seo"` fallback layer?** Now formally documented
+  **DONE 2026-09-14.** The owner decided the front desk holds it: the refusal
+  happens with a member standing at the desk and the person opposite them IS
+  the desk, so withholding it never prevented the override, it just made
+  someone fetch a manager while a queue formed. Every override is written to
+  the audit log with its actor. `TIER_BASELINES` now grants it to both the
+  `staff` and `admin` tiers, and `RECONCILED_FLAGS_URL` reconciles flags for
+  this ONE url — top-up alone only ever adds a MISSING url and would have
+  left the existing read-only rows untouched.
+- [x] **Retire the `sectionKey: "seo"` fallback layer.** Now formally documented
   and pinned server-side (`SEO_FALLBACK_SECTION_KEY`, see above) — the
   remaining question is unchanged and is a different one: whether to DELETE the
   fallback now that it is dead in practice. Precedence was formalised in
@@ -163,6 +171,13 @@ entitled to make; none of them is being guessed at.
   are last. Checked 2026-09-14: **0 `sectionKey: "seo"` rows exist** and all
   three marketing routes have a `SeoMeta` row, so the fallback is already dead
   in practice. Deleting the layer is a deliberate removal, not a fix.
+  **DONE 2026-09-14.** Removed from `lib/seo.ts` and the three marketing
+  pages after re-checking production: still 0 rows using the key, and `/`,
+  `/programs` and `/contact` each carry an active `SeoMeta` row with both a
+  metaTitle and a metaDescription. The all-or-nothing rule between the two
+  CMS layers went with it — with one editor left there is nothing for a
+  title and a description to disagree about. The server still reserves the
+  key; inert rather than wrong, and left alone deliberately.
 
 ### Open — known and accepted (1, was 2)
 
@@ -736,6 +751,34 @@ can be allowed to edit FAQs without being able to touch pricing.
 - [x] `/currency-master` was a routed, gated admin screen with no menu row —
   super admin bypassed and it worked, everyone else got "Menu not found", and
   it could never appear in a sidebar. Seeded.
+
+## Needs an owner decision (raised 2026-09-14)
+
+Both found while sweeping for "gaps like these". Neither is guessed at in code.
+
+- [ ] **A branch admin cannot create staff, although they are granted `write`
+  on `/employee`.** Three settled decisions meet and contradict each other:
+  `TIER_BASELINES` gives the `admin` tier read+write+edit on `/employee`;
+  `/role-master` is in `RESERVED_TO_SUPER_ADMIN`, so a branch admin gets 403 on
+  `GET /roles`; and `Employee.roleId` is `required: true` on the model. The
+  Employee form also marks Department, Country, State and City required, which
+  contradicts CLAUDE.md's own note that those are optional "because a branch
+  admin is a login, not an HR record". Verified live: `GET /roles` as
+  `nventra01@gmail.com` returns 403. So the Role dropdown is empty and the form
+  cannot be satisfied. **Two ways out, and it is a policy call, not a bug fix:**
+  either staff creation is genuinely a super-admin job (then take `write` off
+  the admin tier, so the panel stops offering an Add button that cannot work),
+  or branch admins should create staff (then they need a narrow "roles I may
+  assign" lookup — `checkEscalationCeiling` already exists to bound it — and
+  the form's four HR fields should stop being required). Nothing has been
+  changed either way.
+
+- [ ] **One dangling `Employee.departmentId`.** `audit:integrity` reports it:
+  an INACTIVE `test@gmail.com` row points at a department that no longer
+  exists. Harmless (the account is switched off) but it keeps the sweep red,
+  which is how a real finding gets ignored. Left alone deliberately — it is
+  production data on an account that is not mine to delete unasked. Either
+  clear the field or remove the row.
 
 ## Known open defect
 
