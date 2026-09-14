@@ -756,7 +756,7 @@ can be allowed to edit FAQs without being able to touch pricing.
 
 Both found while sweeping for "gaps like these". Neither is guessed at in code.
 
-- [ ] **A branch admin cannot create staff, although they are granted `write`
+- [x] **A branch admin cannot create staff, although they are granted `write`
   on `/employee`.** Three settled decisions meet and contradict each other:
   `TIER_BASELINES` gives the `admin` tier read+write+edit on `/employee`;
   `/role-master` is in `RESERVED_TO_SUPER_ADMIN`, so a branch admin gets 403 on
@@ -772,13 +772,29 @@ Both found while sweeping for "gaps like these". Neither is guessed at in code.
   assign" lookup — `checkEscalationCeiling` already exists to bound it — and
   the form's four HR fields should stop being required). Nothing has been
   changed either way.
+  **DONE 2026-09-14, and it was worse than a missing dropdown.** Opening the
+  list exposed that reserving the roles SCREEN was being treated as a control
+  over role ASSIGNMENT, which it never was: `createEmployee`/`updateEmployee`
+  wrote `req.body.roleId` unchecked. Proved against production as the Vasna
+  branch admin — an employee was created holding `SUPPORT`, which exceeds a
+  branch admin's ceiling by 111 flag-grants including `/employee-roles` and
+  `/menu-master` in full. (Probe created inactive, deleted immediately.) The
+  ceiling now lives in `middlewares/roleCeiling.js`, shared with the
+  role-editing guard so the two cannot drift, and applies on create AND
+  update. `GET /roles/assignable` is the bounded lookup the form reads; the
+  full `/roles` list stays reserved. The branch picker also stops offering
+  branches the server will refuse.
 
-- [ ] **One dangling `Employee.departmentId`.** `audit:integrity` reports it:
+- [x] **One dangling `Employee.departmentId`.** `audit:integrity` reports it:
   an INACTIVE `test@gmail.com` row points at a department that no longer
   exists. Harmless (the account is switched off) but it keeps the sweep red,
   which is how a real finding gets ignored. Left alone deliberately — it is
   production data on an account that is not mine to delete unasked. Either
   clear the field or remove the row.
+  **DONE 2026-09-14** — owner said delete. The row had 0 references and 0
+  audit entries; a JSON backup was written to the session scratchpad first,
+  and the delete was guarded to refuse if the row was not still inactive.
+  `audit:integrity` now reports no problems.
 
 ## Known open defect
 
