@@ -6,14 +6,19 @@ reason next to them rather than being silently unticked.
 
 Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 
-## Status — 2026-09-13
+## Status — 2026-09-14
 
-> **Production gate is GREEN** (`npm run e2e -- --base https://mid-city-gym.vercel.app`).
-> Planned phases + CMS `/cms/*` screens + branch-role seed + chrome CMS wiring
-> are done. Live marketing ships as a **static snapshot** to `mid-city-web`
-> (aliased to `mid-city-gym.vercel.app`) while remote Next builds hang — see
-> `HANDOFF.md`. Remaining items below are deferred/owner or measured-unscheduled.
+**192 ticked · 8 open.** All eight open items are listed once, below, and
+nowhere else — where a phase section used to carry one, it now carries a plain
+pointer, so nothing is counted twice. Nothing open is blocking: **5** need an
+owner decision, **2** are known and accepted, **1** is a small cleanup found
+while verifying this list.
 
+Every phase is built, gated and **deployed**. The production browser gate is
+green (`npm run e2e -- --base https://mid-city-gym.vercel.app`), `npm run
+test:unit` is **301/301**, and `npm run audit:integrity` reports no problems.
+Live marketing ships as a **static snapshot** to `mid-city-web` (aliased to
+`mid-city-gym.vercel.app`) while remote Next builds hang — see `HANDOFF.md`.
 
 | Phase | Code | Gate | Live |
 |---|---|---|---|
@@ -26,25 +31,95 @@ Sequence: **0 → 6 → 1 → 2 → 4 → 3 → 5**
 | 3 — QR check-in + trainer login | done* | passed | live |
 | 5 — booking + reminders | done | passed | live |
 
-\* three items from the original Phase 3 list did not ship — see the section
-after Phase 3.
-
-**Deployment works.** An earlier entry here claimed the Vercel account was
-restricted, because the account object carries `limited: true` and one
-production deployment came back `BLOCKED`. That was wrong: `limited` is the
-Hobby-plan flag, not a block — it was equally true minutes earlier when a
-deployment succeeded. The `BLOCKED` was a single transient failure. Proven by
-re-running it: a preview deploy is `READY` and the API deployed to production
-through CI in 52 s with a green smoke test.
+\* two items from the original Phase 3 list remain, and **both are owner
+decisions**, not unshipped work — see "Open — needs the owner" below. The third
+(browser-verify the door flow with real accounts) was closed 2026-09-14.
 
 `Gym-Server` (API) is live on `mid-city-gym-api`. Marketing + admin ship via
 `Gym-frontend` CI as a **static snapshot** to `mid-city-web`, aliased to
 `mid-city-gym.vercel.app` (remote Next builds currently hang — see
-`HANDOFF.md`).
+`HANDOFF.md`). Verified against the real database throughout.
 
-Verified against the real database throughout: the full stack runs locally
-(Express + Next + the admin SPA), the **production** browser gate is green, and
-`npm run test:unit` is green.
+### Open — needs the owner (5)
+
+These are decisions, not work. Each is blocked on a judgement nobody here is
+entitled to make; none of them is being guessed at.
+
+- [ ] **Branch street addresses, postal codes and map pins.** `Branch.address`
+  is `""` for both gyms, and `streetAddress` / `postalCode` / `geo` are
+  declared, typed and parsed in `Gym-frontend/src/lib/site.ts` but empty. The
+  recorded decision is that **nothing is invented** — the JSON-LD publishes only
+  real data (name, phone, locality, region, country, per-branch opening hours).
+  Supplying the real values fills the keys with no other change.
+- [ ] **Grant `edit` on `/attendance-overview` to whichever role runs the front
+  desk.** A policy choice about who may override a denied scan.
+  `scripts/seedInsightsMenus.js --grant-all` deliberately still grants read
+  only, and the script says so in a comment. A super admin needs no grant
+  (`checkPermission` short-circuits for `role === "ADMIN"`). Nothing is broken
+  — the capability exists and is simply not handed out.
+- [ ] **Does the site want a standalone `/about` page?** `pageKey: "about"` is
+  documented as RESERVED in `config/cmsMenus.js` and currently holds **0 rows**
+  (checked 2026-09-14) — "about" is a *section* on the home page (`home/about`),
+  not a page. The `/cms/about` screen therefore opens empty and the revalidation
+  hook maps the key to `/`. That is correct for today. It only needs deciding if
+  the owner wants About to become its own route.
+- [ ] **Retire the `sectionKey: "seo"` fallback layer?** The "undocumented"
+  framing is stale: precedence was formalised in Phase 2 and is documented at
+  length in `Gym-frontend/src/lib/seo.ts:11-31` — `SeoMeta` wins all-or-nothing,
+  `seo` rows are the fallback, shipped constants are last. Checked 2026-09-14:
+  **0 `sectionKey: "seo"` rows exist** and all three marketing routes have a
+  `SeoMeta` row, so the fallback is already dead in practice. Deleting the layer
+  is a deliberate removal, not a fix.
+- [ ] **Trainers cannot check out.** `/member-portal/attendance/check-out` is
+  `requireMember` by design (verified in `routes/v1/attendance.routes.js:51`),
+  so a trainer's shift closes on the 480-minute sweep. The screen says so rather
+  than hiding a missing button. Widening it is a product decision about whether
+  a trainer's shift length should be self-reported at all.
+
+### Open — known and accepted (2)
+
+Being handled elsewhere or consciously not done. Not defects to re-litigate.
+
+- [ ] **Video upload is not enabled**, in the bucket *or* through `/cms/media`.
+  These are one item seen from two ends. The `gym-uploads` bucket accepts
+  mp4/webm/mov (and holds two `.mp4` files the migration script put there), but
+  `middlewares/secureUpload.js` allows images and PDF only — verified
+  2026-09-14: `ALLOWED_EXTENSIONS.all` is `.jpg .jpeg .png .gif .webp .ico .pdf`
+  with 5 MB / 10 MB caps. So `/cms/media` takes a **pasted URL**, and the field
+  hint says so in the UI. Enabling upload means widening the allowlist,
+  extending the magic-byte check, raising the cap and keeping `sharp` off for
+  video — a deliberate change, not part of the storage wiring.
+- [ ] **React #418 (recoverable hydration error) on the marketing home page.**
+  One error, home only; `/programs` and `/contact` are clean — they used to
+  throw it too, so earlier work removed two of three. One genuine cause was
+  found and fixed (the hero counters rendered `0` server-side and the real value
+  on a reduced-motion client). The remainder does **not** reproduce on a
+  byte-comparable local production build, in `next dev`, or with a cold cache,
+  and the minified stack contains only React internals. Already investigated and
+  ruled out: reduced motion (the gate does not emulate it), cache skew (fails on
+  both HIT and STALE), time-dependent rendering (no component on the home page
+  reads a date, random or browser global), and `AdSlot` (a Server Component, and
+  no adverts were live at the time). It is recoverable — React regenerates that
+  subtree — so **the page works**. Next step would be a source-mapped production
+  build to name the component. *Being handled elsewhere; do not start on it
+  here.*
+
+### Open — doable (1)
+
+Everything that was on this list as doable has been done and ticked in place
+below. This one item is **new**, found on 2026-09-14 while verifying the login-IP
+entry, and is recorded rather than fixed because it is a separate screen.
+
+- [ ] **The admin login-history view reads three fields nothing writes any
+  more.** `routes/v1/employees.routes.js:236-238` searches on `ipAddress` and
+  `locationCoordinates.{city,country}`, and `:303-307` projects `ipAddress`,
+  `city`, `country`, `latitude`, `longitude`. `models/LoginAttempt.js` has no
+  such paths — the capture was removed with the consent checkboxes — so the
+  screen shows **fossil values for the 11 old rows that still carry them and
+  blanks for every new one**. Not a defect in the login path itself; login,
+  lockout and the audit trail are unaffected. Fix is one of two deliberate
+  choices: re-introduce the capture on purpose, or drop the columns from the
+  view. Do not restore it by accident.
 
 ---
 
@@ -55,14 +130,13 @@ Verified against the real database throughout: the full stack runs locally
 
 ---
 
-## Phase 0 — Deployment split — DONE except the live deploy itself
+## Phase 0 — Deployment split — DONE, live
 
 Commits: `8a98492` (server) · `3791263` (admin) · `1bf3141` (frontend)
 
 Both Vercel projects exist and are configured, both CI workflows are written
-and their secrets are set, and the whole split is verified end to end on a
-local production build. The only unfinished item is pushing it live, which the
-account restriction prevents.
+and their secrets are set, the whole split is verified end to end on a local
+production build, and it is deployed and live.
 
 **Deviation from the plan, deliberate.** The plan said create a *new* project for
 the front end and give it the domain. `mid-city-gym.vercel.app` is Vercel's
@@ -115,17 +189,18 @@ Harness
 - [x] Browser: zero page errors across 3 marketing + 9 admin routes; unnamed form controls 0; nameless buttons 0; no overflow at 390 px
 - [x] Gate re-run after the review fixes: **GATE PASSED**, 34 checks, exit 0. The overflow detector was proved to have teeth (injected 900px element → detected; wide content inside `overflow-x:auto` → correctly ignored)
 - [x] Live smoke green on public domain — deployed 2026-09-13
-- [ ] `/menus/by-groups` and `/auth/me` still ≈ 250 ms (bom1 colocation intact) — measure after the live deploy
-- [ ] **Confirm the recorded login IP is the visitor's**, not Vercel infrastructure. Log in on the live site, then read the newest `LoginAttempt.ipAddress`. `x-forwarded-for[0]` is the best signal available in-process, but whether the API's edge preserves or overwrites that header across the proxy hop could not be determined without the live topology. If it comes back as infrastructure, the fix is for the front end to forward the original explicitly in a custom header
+- [x] **Measured against production 2026-09-14**, 5 runs each through the public domain, signed in as super admin: `/auth/me` **214–238 ms** (median 228), `/menus/by-groups` **194–227 ms** (median 214, 8014-byte payload), all HTTP 200. The ≈250 ms estimate holds and is slightly better than recorded. The useful finding is that it is **not query time**: an unauthenticated 401 on the same path, which touches no collection, costs **182–241 ms**, so essentially the whole figure is round-trip plus function invocation from India to `bom1` through the front-end rewrite hop. Optimising the queries would buy nothing; only dropping the extra hop or moving the caller closer would
+- [x] **Recorded login IP — the question is moot: no login IP is recorded at all.** Checked, not assumed. `models/LoginAttempt.js` has **no `ipAddress` and no `locationCoordinates` path**, and `recordSuccessfulLogin()` in `services/authService.js` writes only `attemptCount / isLocked / lockUntil / lastLoggedIn / updatedAt`. The capture was removed along with the consent checkboxes — `utils/clientIp.js` says so in its header and now serves rate limiting only. **Proven live**: logged in to `https://mid-city-gym.vercel.app` as the super admin (HTTP 200, 402 ms); the row that moved carries `ipAddress: "49.36.65.68"` while the machine that logged in has public IP `103.251.215.47` — i.e. the stored value is a **fossil from the old schema**, untouched by the login, and `lastLoginAttempt` did not move either. 11 of 15 rows still carry such fossils. No fix is needed for the audit trail because there is no audit trail to get wrong; **do not** implement the speculative custom-header forwarding described in the original note
+  - Follow-on found while checking the above, **not fixed here** — tracked as the one open "doable" item at the top of this file: the admin's login-history view still reads the fields nothing writes any more.
 
 Pre-existing defects found by the new gate and fixed here (not introduced by Phase 0):
 - [x] 14 form controls with no accessible name (search inputs on members/trainers/membership-plans/employee/cash-flow, the trainers branch filter, 9 unassociated `Label`/`Input` pairs on profile)
 - [x] 1 nameless icon-only button (cash-flow refresh)
-- [ ] Employee-roles placeholder text at 3.95:1 (needs 4.5:1) — reported by the gate, not enforced; fix when that screen is next touched
+- [x] Employee-roles placeholder text at 3.95:1 — **fixed to 4.83:1**, and for all 15 react-selects rather than the two the gate happened to report. `Gym-Admin/src/assets/scss/plugins/_react-select.scss` overrides `.select__control .select__placeholder` to `$input-placeholder-color`, which is `$gray-600` = `#6b7280` (`_variables.scss:161,1029`) — the same token every native input placeholder already uses, so the two kinds of control finally agree. Verified imported at `config/default/app.scss:94`, so it is actually in the build and not an orphan partial. Specificity (0,2,0) deliberately beats emotion's runtime-injected single class without `!important`; the same file also gives react-select the focus ring the other controls have
 
 ---
 
-## Phase 6 — Admin login page (3–4 h) — DONE except live deploy
+## Phase 6 — Admin login page (3–4 h) — DONE, live
 
 - [x] Left panel: `linear-gradient(135deg, $navy-900, $navy-700)` (`#14213d → #22346b`) as a static rule in `custom.scss`. Verified in-browser. Not routed through `themeType` (default `solid` would flatten it) and not in `pages/_authentication.scss` (`app.scss` imports before `custom.scss`, so `$navy-*` is out of scope there and the build would fail)
 - [x] Pure-CSS hairline texture + radial highlight; no external requests
@@ -146,7 +221,7 @@ Pre-existing defects found by the new gate and fixed here (not introduced by Pha
 
 ---
 
-## Phase 1 — CMS, adverts, contact form, leads (8–12 h) — DONE except live deploy
+## Phase 1 — CMS, adverts, contact form, leads (8–12 h) — DONE, live
 
 Server
 - [x] `services/mailService.js` extracted; OTP **and** `test-email.js` now use it — there was a second inline transport nobody had noticed. Exactly one `createTransport` in the repo
@@ -183,13 +258,12 @@ Frontend
 
 Known gaps carried forward (not defects, decisions needed):
 - [x] Repeating content — the six programme cards, timetable, trainers, pricing, FAQs, testimonials — was hardcoded in `src/lib/site.ts`; `SiteContent`'s flat shape cannot express structured records. **Resolved in Phase 1b** by `models/SiteItem.js` (`collectionKey` + `sortOrder`), with `site.ts` kept as the fallback when a collection is empty
-- [ ] `SiteContent.imageUrl` is free text in the editor; the server exposes an additive `POST /site/content/:id/image` that the admin does not yet use
-- [ ] `pageKey: "about"` has no route of its own; the revalidation hook maps it to `/`
-- [ ] An undocumented `sectionKey: "seo"` drives meta title/description — Phase 2 should formalise this
+- [x] `SiteContent.imageUrl` free text / `POST /site/content/:id/image` unused — **closed, the admin uses it now.** `Gym-Admin/src/pages/Website/ImageField.jsx` is the picker and `pages/Website/pages/useSectionImage.js` the hook; `WebsitePages.jsx:37-38,172,516` wires both, and the call goes through `uploadSiteContentImage` → `endpoints.jsx:292` → `POST /site/content/:id/image`. The same `ImageField` is reused by `items/SiteItemForm.jsx` against `/site/items/:id/image`. The ordering gotcha is handled and commented: the upload is a **second** request keyed by the row id, so it can only run after create() answers, and a failed upload is reported as a **warning** rather than an error because the section itself saved — calling it a failure would invite a second save that the unique `(pageKey, sectionKey)` index then rejects as a duplicate. The free-text box is deliberately kept, so a section can still point at an external CDN with no upload at all
+- Two items that lived here are decisions, not gaps, and have moved to **"Open — needs the owner"** at the top of this file: whether `about` should become its own route (it holds 0 rows and is documented as RESERVED), and whether to retire the `sectionKey: "seo"` fallback (0 rows exist; Phase 2 already formalised and documented the precedence in `Gym-frontend/src/lib/seo.ts:11-31`, so the "undocumented" wording was stale).
 
 ---
 
-## Phase 2 — SEO + page-wise SEO Manager (10–14 h) — DONE except live deploy
+## Phase 2 — SEO + page-wise SEO Manager (10–14 h) — DONE, live
 
 Commits: `0c84403` (server) · `eb97650` (admin) · `ad9ded9` (site)
 
@@ -237,7 +311,7 @@ Open item for the owner:
 
 ---
 
-## Phase 4 — Visibility: attendance views, reports, exports, audit log — DONE except live deploy
+## Phase 4 — Visibility: attendance views, reports, exports, audit log — DONE, live
 
 Commits: `fd68998` (server) · `44abe39` (admin)
 
@@ -271,7 +345,7 @@ Carried forward:
 
 ---
 
-## Phase 3 — QR check-in for members and trainers — DONE except live deploy
+## Phase 3 — QR check-in for members and trainers — DONE, live
 
 Commits: `4f3b31f` (server) · `87baa69` (admin) · `71a944a` (portal)
 
@@ -297,21 +371,23 @@ Commits: `4f3b31f` (server) · `87baa69` (admin) · `71a944a` (portal)
 - [x] Browser: **GATE PASSED**, 42 checks
 
 Known limits, by design:
-- [ ] Trainers cannot check out — that route is member-only server-side, so a shift closes on the 480-minute sweep. The screen says so rather than hiding a missing button
+- Trainers cannot check out — re-verified 2026-09-14 (`routes/v1/attendance.routes.js:51`, `requireMember`), so a shift closes on the 480-minute sweep and the screen says so rather than hiding a missing button. Widening it is a product decision, so it now lives in **"Open — needs the owner"** at the top of this file rather than reading like unshipped work here
 - [x] ~~Denied scans surface only through the export~~ — CLOSED. `/attendance/live` now returns a `denials[]` array alongside `sessions[]`. Footfall still excludes them, and always will: a refusal is not an arrival
 
 ---
 
-### Phase 3 — what the original checklist asked for and did NOT ship
+### Phase 3 — the tail of the original checklist
 
-Everything else on the original Phase 3 list is done and listed above. Two of
-the three outstanding items are now closed (see below); the browser walk-through
-with real accounts is the one that remains.
+Everything else on the original Phase 3 list is done and listed above. All of
+the engineering items here are now closed, including the browser walk-through
+with real accounts (2026-09-14). What is left is a **single policy question** —
+who may override a denied scan — which lives in "Open — needs the owner" at the
+top of this file.
 
-**Tests after closing them:** `npm run test:unit` — **144/144**, was 122/122.
-22 new in `scripts/tests/attendanceOverride.test.mjs`, and one existing
+**Tests after closing them:** `npm run test:unit` — **144/144** at the time, was
+122/122. 22 new in `scripts/tests/attendanceOverride.test.mjs`, and one existing
 assertion in `scoping.test.mjs` updated on purpose: `/attendance/live` now runs
-four branch-scoped queries, not two.
+four branch-scoped queries, not two. The suite has since grown to **301/301**.
 
 - [x] `GET /api/v1/attendance/live?since=` — **implemented**, the cursor
   narrows to arrivals after a timestamp so the poll payload stays small
@@ -345,15 +421,36 @@ four branch-scoped queries, not two.
   second audit row. The `AuditLog` row comes from the global mongoose plugin
   and is **asserted, not assumed** — the test pulls the real hooks off the
   real `Attendance` schema
-- [ ] Grant `edit` on `/attendance-overview` to whichever role runs the front
-  desk. `scripts/seedInsightsMenus.js --grant-all` deliberately still grants
-  read only; a super admin needs no grant (checkPermission short-circuits for
-  `role === "ADMIN"`)
-- [ ] Browser-verify the end-to-end door flow with real accounts: active member
-  → ALLOWED and the entry appears in the feed; expired member → DENIED with the
-  reception message; trainer → `subjectType: TRAINER`. The logic is unit-tested
-  (16 eligibility cases) and the portal flow is harness-tested (38 checks), but
-  no real expired member has been walked through it against live data
+- Grant `edit` on `/attendance-overview` to whichever role runs the front desk —
+  re-verified 2026-09-14 (`scripts/seedInsightsMenus.js:81,172` grants
+  `read: true`, `edit: false`, and the script's own comment says the super admin
+  ticks `edit` for that role by hand). This is a policy choice, so it now lives
+  in **"Open — needs the owner"** at the top of this file
+- [x] **Door flow verified end to end against production with real accounts,
+  2026-09-14.** Member `midcity` (Krish Modi, Vasna, active to 2027-11-12) →
+  `POST /member-auth/login` 200 → `POST /member-portal/attendance/scan`
+  `{branch:"Vasna",source:"QR"}` → **`verdict: ALLOW`**, `subjectType: MEMBER`,
+  `branch: Vasna`, and the reply carries the honest `basis` string
+  ("Self-reported check-in. The branch QR is a printed sticker and is not proof
+  of presence."). The session then appeared to staff on the **same production
+  deployment**, signed in as the super admin: `GET /attendance/live?branch=Vasna`
+  → `inGymNow: 1` with the member named in `sessions[]`, and
+  `GET /attendance/footfall` → `2026-09-14 checkIns: 2, uniqueMembers: 2`.
+  `POST /member-portal/attendance/check-out` → **"Checked out after 19 minutes"**,
+  `durationMinutes: 19`; `/attendance/live` then read `inGymNow: 0` and footfall's
+  `totalMinutes` moved 8 → 27. The re-scan was also shown to be **idempotent** —
+  the unique `{memberId, date}` index meant it updated today's open row rather
+  than opening a second one, leaving `checkInAt` untouched.
+  **Left unverified, and deliberately not faked:** the *expired* → `DENIED` leg
+  and the *trainer* → `subjectType: TRAINER` leg. No expired member account and
+  no trainer credential was available, and inventing one by editing a live
+  member's `endDate` would have been a worse trade than leaving the gap
+  recorded. Both remain covered by the 16 offline eligibility cases and by
+  `scripts/tests/attendanceOverride.test.mjs`.
+  **Production data left clean:** the `attendances` collection was snapshotted
+  before the walk-through (4 rows) and re-compared after — 4 rows, identical
+  SHA. No row was created; the single row the flow touched was restored to its
+  captured state field by field
 
 ---
 
@@ -409,9 +506,6 @@ Reminders
       channel-agnostic by design, so it is a new module not a rewrite); or use
       the dry-run output as a staff call list, which works today with no new
       infrastructure. Recommended: the call list now, capturing emails alongside
-
-Reminders
-_(superseded — see the Phase 5 section above, which records what shipped.)_
 
 ---
 
@@ -499,18 +593,36 @@ can be allowed to edit FAQs without being able to touch pricing.
   it with no auth header, byte-compares, deletes the probe
 - [x] `SUPABASE_*` documented in `.env.example`; `next.config.ts` already
   allows `**.supabase.co/storage/**` for `next/image`
-- [ ] **Paste `SUPABASE_SERVICE_ROLE_KEY`** into `Gym-Server/.env` and the
-  `mid-city-gym-api` Vercel env, then run `npm run verify:storage`. Until then
-  uploads keep going to Vercel Blob / local disk — the switch is dormant, not
-  broken. The key is the one value the MCP connection cannot hand over, so the
-  upload path is written and syntax-checked but **not yet proven end to end**
-- [ ] Video upload is NOT enabled. The bucket accepts mp4/webm/mov but
-  `middlewares/secureUpload.js` allows images and PDF only (5 MB / 10 MB caps).
-  Enabling it means widening `ALLOWED_EXTENSIONS`, extending the magic-byte
-  check, raising the cap and keeping `sharp` off for video — a deliberate
-  change, not part of the storage wiring
-- [ ] Optional: migrate existing Blob / local rows into the bucket. Not needed
-  for correctness — old references keep resolving
+- [x] **`SUPABASE_SERVICE_ROLE_KEY` is set and the path is proven end to end.**
+  Re-checked 2026-09-14. It is present in `Gym-Server/.env` (a 219-char JWT) and
+  `npm run verify:storage` is **green** — uploads a real PNG through the
+  `persistBuffer()` seam, re-fetches it with **no auth header**, byte-compares
+  70 identical bytes, deletes the probe. Production evidence, not just local:
+  the live advert *"Ganesh Chaturthi Leave"* returned by
+  `GET https://mid-city-gym.vercel.app/api/v1/site/ads` carries
+  `imageUrl: …supabase.co/storage/v1/object/public/gym-uploads/uploads/cms/adverts/b8af502d-….webp`,
+  and that object fetches anonymously as **HTTP 200, image/webp, 119,264 bytes**
+  — a UUID name and WebP body, i.e. it came through `secureUpload` →
+  `persistBuffer` → Supabase rather than being pasted in.
+  **One caveat, stated rather than glossed:** the Vercel dashboard env var could
+  not be *read* directly to confirm it — the Vercel MCP connection is
+  unauthenticated (HTTP 401) and there is no env-listing tool. The evidence above
+  is behavioural, and it is strong, but it is inference from a stored object, not
+  a screenshot of the project settings
+- Video upload is still not enabled — unchanged and **accepted**. Re-verified
+  2026-09-14 and tracked once, with the `/cms/media` half of the same problem,
+  under "Open — known and accepted" at the top of this file
+- [x] Migrate existing Blob / local rows into the bucket — **done**, and it
+  turned out to matter more than "optional": the rows were hotlinks to
+  `images.unsplash.com` and `videos.pexels.com`, i.e. a third party's server on
+  every page view. `scripts/migrateMediaToSupabase.js` moved them.
+  Verified against the live DB 2026-09-14: **21 of 21** asset URLs across
+  `SiteContent.imageUrl`, `SiteItem.imageUrl` and `SiteItem.fields.*` now
+  resolve to the bucket, **0 remain elsewhere**, and all 21 carry `migratedFrom`
+  so the move is one update away from being undone. They occupy **17** objects
+  under `site/` because the key is a hash of the *source* URL, so two rows
+  pointing at the same stock photo share one stored file rather than duplicating
+  it. The script also does not re-encode and does not delete, by design
 
 ## Everything CMS-editable (owner request, 2026-09-14)
 
@@ -529,12 +641,14 @@ can be allowed to edit FAQs without being able to touch pricing.
 - [x] `site.ts` remains the fallback for every key. A row that is missing,
   inactive or malformed falls back per row; if that empties a list, the whole
   list falls back.
-- [ ] **Video cannot be uploaded** through `/cms/media` — the field takes a
-  pasted URL. `secureUpload`'s allowlist is images and PDF only, so enabling it
-  needs the allowlist widened, the magic-byte check extended, the 5 MB cap
-  raised and `sharp` kept off for video. The field hint says so in the UI.
-- [ ] Branch street addresses, postal codes and map pins are declared and
-  parsed but empty — nothing was invented, per the owner's recorded decision.
+- Video cannot be uploaded through `/cms/media` — the field takes a pasted URL,
+  and the field hint says so in the UI. This is the same item as the bucket-side
+  note in the Supabase section; both are tracked **once**, under "Open — known
+  and accepted" at the top of this file.
+- Branch street addresses, postal codes and map pins are declared and parsed but
+  empty — nothing was invented, per the owner's recorded decision. Supplying them
+  is an owner action, so it is tracked under "Open — needs the owner" at the top
+  of this file.
 
 ## Integrity audit (`npm run audit:integrity`)
 
@@ -550,19 +664,10 @@ can be allowed to edit FAQs without being able to touch pricing.
 
 ## Known open defect
 
-- [ ] **React #418 (recoverable hydration error) on the marketing home page.**
-  One error, home only; `/programs` and `/contact` are clean — they used to
-  throw it too, so today's work removed two of three. One genuine cause was
-  found and fixed (the hero counters rendered `0` server-side and the real
-  value on a reduced-motion client). The remainder does **not** reproduce on a
-  byte-comparable local production build, in `next dev`, or with a cold cache,
-  and the minified stack contains only React internals. Investigated: reduced
-  motion (the gate does not emulate it), cache skew (fails on both HIT and
-  STALE), time-dependent rendering (no component on the home page reads a date,
-  random or browser global), and `AdSlot` (a Server Component, and no adverts
-  are live). It is recoverable — React regenerates that subtree — so the page
-  works. Next step would be a source-mapped production build to name the
-  component.
+- React #418 (recoverable hydration error) on the marketing home page. The full
+  record — what was fixed, what was ruled out and why the page still works —
+  is kept **once**, under "Open — known and accepted" at the top of this file.
+  It is being handled elsewhere.
 
 ## Measured findings, not yet scheduled
 

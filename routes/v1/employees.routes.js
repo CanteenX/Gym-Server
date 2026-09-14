@@ -230,13 +230,19 @@ router.post(
       let matchQuery = {};
 
       if (match) {
+        /**
+         * Email only. ipAddress and locationCoordinates were removed from
+         * LoginAttempt when the consent checkboxes went (see
+         * utils/clientIp.js — the client IP now serves rate limiting and
+         * nothing else), so nothing has written those fields for a long time.
+         *
+         * Searching them was not merely useless, it was misleading: a search
+         * matched the handful of rows written before the removal and silently
+         * missed every row since, which reads as "we have no record of that
+         * login" rather than "we no longer store that".
+         */
         matchQuery = {
-          $or: [
-            { userEmail: { $regex: match, $options: "i" } },
-            { ipAddress: { $regex: match, $options: "i" } },
-            { "locationCoordinates.city": { $regex: match, $options: "i" } },
-            { "locationCoordinates.country": { $regex: match, $options: "i" } },
-          ],
+          $or: [{ userEmail: { $regex: match, $options: "i" } }],
         };
       }
 
@@ -300,11 +306,6 @@ router.post(
             lockUntil: attempt.lockUntil,
             lastLoginAttempt: attempt.lastLoginAttempt,
             lastLoggedIn: attempt.lastLoggedIn,
-            ipAddress: attempt.ipAddress,
-            city: attempt.locationCoordinates?.city || "-",
-            country: attempt.locationCoordinates?.country || "-",
-            latitude: attempt.locationCoordinates?.latitude || null,
-            longitude: attempt.locationCoordinates?.longitude || null,
             isActive,
             createdAt: attempt.createdAt,
             updatedAt: attempt.updatedAt,
