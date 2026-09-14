@@ -30,7 +30,7 @@
  *      travel in URLs, exports and screenshots. That is the real boundary, so
  *      it gets a test per verb.
  */
-import test from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 
 import EmployeeModels from "../../models/Employee.js";
@@ -44,6 +44,8 @@ import {
   createEmployee,
   resetPassword,
 } from "../../controllers/v1/employee.controller.js";
+import RoleMaster from "../../models/RoleMaster.js";
+import EmployeeRoles from "../../models/EmployeeRoles.js";
 
 // ===================================================================
 // Fixtures
@@ -68,6 +70,9 @@ const branchAdmin = (branch, body = {}, params = {}) => ({
       email: `${branch.toLowerCase()}@example.com`,
       branch,
       isSuperAdmin: false,
+      // Real sessions carry this; createEmployee now measures the role
+      // being assigned against it (middlewares/roleCeiling.js).
+      permissions: [{ menuId: "menu-1", read: true, write: true }],
     },
   },
   user: {
@@ -124,6 +129,9 @@ const branchlessAdmin = (body = {}, params = {}) => ({
       email: "nobranch@example.com",
       branch: null,
       isSuperAdmin: false,
+      // Real sessions carry this; createEmployee now measures the role
+      // being assigned against it (middlewares/roleCeiling.js).
+      permissions: [{ menuId: "menu-1", read: true, write: true }],
     },
   },
   user: {
@@ -622,6 +630,38 @@ const withCapturedSave = async (fn) => {
   }
   return saved;
 };
+
+/**
+ * createEmployee/updateEmployee now consult middlewares/roleCeiling.js, which
+ * reads RoleMaster and EmployeeRoles. Those are unrelated to the branch
+ * scoping these tests pin, and there is no database here, so they are stubbed
+ * to the permissive answer: a real active role that grants NOTHING, which
+ * cannot exceed anybody's ceiling. The ceiling itself is tested separately in
+ * roleAssignmentCeiling.test.mjs and, behaviourally, in
+ * employeeRolesEscalation.test.mjs.
+ *
+ * Without this the guard finds no role, refuses, and every create/update test
+ * fails with a 403 that has nothing to do with branches.
+ */
+const stubRoleLookup = () => {
+  const roleFind = RoleMaster.findById;
+  const permFind = EmployeeRoles.findOne;
+  RoleMaster.findById = () => ({ lean: async () => ({ _id: "role-1", role: "Staff", isActive: true }) });
+  EmployeeRoles.findOne = () => ({ lean: async () => ({ roles: [] }) });
+  return () => {
+    RoleMaster.findById = roleFind;
+    EmployeeRoles.findOne = permFind;
+  };
+};
+
+/**
+ * Installed for the WHOLE file rather than per test: nothing here is about the
+ * role ceiling, and threading a stub through ten call sites is ten chances to
+ * forget one and get a 403 that looks like a scoping regression.
+ */
+let restoreRoleLookup = () => {};
+before(() => { restoreRoleLookup = stubRoleLookup(); });
+after(() => restoreRoleLookup());
 
 const createBody = (over = {}) => ({
   employeeName: "New Hire",

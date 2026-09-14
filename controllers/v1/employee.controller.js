@@ -17,6 +17,7 @@ import { scopedBranch, isSuperAdmin } from "../../middlewares/branchScope.js";
  * drift apart.
  */
 import { lastSuperAdminError } from "../../middlewares/superAdminFloor.js";
+import { roleAssignmentError } from "../../middlewares/roleCeiling.js";
 
 /**
  * Guards who may create or edit whom.
@@ -191,6 +192,21 @@ export const createEmployee = async (req, res) => {
       });
     }
 
+    /**
+     * You may not hand someone a role you could not grant yourself.
+     *
+     * `/role-master` being reserved to the super admin stops a branch admin
+     * LISTING roles; it never stopped them naming an id, and `roleId` was
+     * written onto the row with nothing checking it. Confirmed live: a Vasna
+     * branch admin created an employee carrying the SUPPORT role, which holds
+     * /employee-roles and /menu-master in full — sign in as that account and
+     * it can grant itself anything.
+     */
+    const roleError = await roleAssignmentError(req, roleId);
+    if (roleError) {
+      return res.status(403).json({ isOk: false, message: roleError, status: 403 });
+    }
+
     if (typeof emailOffice !== "string") {
       return res.status(400).json({
         isOk: false,
@@ -344,6 +360,14 @@ export const updateEmployee = async (req, res) => {
         message: "Email already exists",
         status: 400,
       });
+    }
+
+    // The same ceiling as create: editing an existing employee is the other
+    // road to the same escalation — swap their role for a stronger one and
+    // sign in as them.
+    const roleError = await roleAssignmentError(req, roleId);
+    if (roleError) {
+      return res.status(403).json({ isOk: false, message: roleError, status: 403 });
     }
 
     employee.employeeName = employeeName;

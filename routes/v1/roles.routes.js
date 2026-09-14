@@ -5,6 +5,7 @@ import { checkPermission } from "../../middlewares/checkPermission.js";
 import {
   createRole,
   listAllRoles,
+  listAssignableRolesHandler,
   updateRole,
   deleteRole,
   getRoleById,
@@ -59,6 +60,36 @@ router.post("/roles", authMiddleware(["ADMIN", "EMPLOYEE"]),checkPermission("/ro
  *                     $ref: '#/components/schemas/Role'
  */
 router.get("/roles", authMiddleware(["ADMIN", "EMPLOYEE"]),checkPermission("/role-master", "read"), listAllRoles);
+/**
+ * @swagger
+ * /roles/assignable:
+ *   get:
+ *     summary: Roles the signed-in user may assign to staff
+ *     tags: [Roles]
+ *     responses:
+ *       200: { description: "{ data } — ids and names only, bounded by the caller's own permissions" }
+ */
+/**
+ * DELIBERATELY NOT gated on /role-master — that gate is the bug.
+ *
+ * The roles SCREEN is reserved to the super admin, but creating staff is not:
+ * the admin tier legitimately holds `write` on /employee. So a branch admin was
+ * asked to choose a role from a list they were 403'd out of, the dropdown came
+ * back empty, and Employee.roleId is required — no branch admin could save any
+ * employee at all.
+ *
+ * This returns ids and names ONLY, and only for roles the caller could already
+ * assign, bounded by middlewares/roleCeiling.js — the same comparison that
+ * guards role editing. It discloses nothing they could not establish by trying
+ * one, and the write path is guarded independently, so this is a convenience
+ * over an enforced boundary rather than the boundary itself.
+ */
+router.get(
+  "/roles/assignable",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  listAssignableRolesHandler,
+);
+
 /**
  * @swagger
  * /roles/admin-created:

@@ -3,8 +3,21 @@ import Employee from "../../models/Employee.js";
 import RoleMaster from "../../models/RoleMaster.js";
 import mongoose from "mongoose";
 import { isSuperAdminSession } from "../../middlewares/superAdmin.js";
+/**
+ * The ceiling comparison moved to middlewares/roleCeiling.js.
+ *
+ * Not a refactor for tidiness. There are TWO roads to giving somebody a
+ * capability - editing a role's permissions (here) and assigning an existing
+ * role to a person (employee.controller.js) - and only this one was guarded.
+ * One comparison now serves both, because a rule written twice is a rule that
+ * drifts, and the drift is invisible: the wrong answer is silence.
+ */
+import {
+  PERMISSION_KEYS,
+  buildPermissionMap,
+  getPermissionViolations,
+} from "../../middlewares/roleCeiling.js";
 
-const PERMISSION_KEYS = ["read", "write", "edit", "delete", "print", "mail"];
 
 const processRoles = (roles) =>
   roles.map((role) => ({
@@ -18,40 +31,7 @@ const processRoles = (roles) =>
     mail: role.mail || false,
   }));
 
-const buildPermissionMap = (permissions) => {
-  const permissionMap = {};
 
-  for (const perm of permissions) {
-    if (perm.menuId) {
-      permissionMap[perm.menuId] = perm;
-    }
-  }
-
-  return permissionMap;
-};
-
-const getPermissionViolations = (callerPermissions, requestedRoles) => {
-  const callerPermMap = buildPermissionMap(callerPermissions);
-  const violations = [];
-
-  for (const requested of requestedRoles) {
-    if (!requested.menuId) continue;
-
-    const callerPerm = callerPermMap[requested.menuId];
-
-    for (const key of PERMISSION_KEYS) {
-      // ✅ Fix 1: optional chaining instead of !callerPerm || callerPerm[key]
-      if (requested[key] === true && callerPerm?.[key] !== true) {
-        violations.push({
-          menuId: requested.menuId,
-          permission: key,
-        });
-      }
-    }
-  }
-
-  return violations;
-};
 
 /**
  * What a caller with NO permission set of their own is told.

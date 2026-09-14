@@ -4,6 +4,7 @@ import {
   getReferencingCounts,
   formatReferenceMessage,
 } from "../../utils/referenceHelper.js";
+import { listAssignableRoles } from "../../middlewares/roleCeiling.js";
 
 // Helper: Escape regex special characters to prevent NoSQL injection
 const escapeRegex = (str = "") =>
@@ -312,6 +313,36 @@ export const listEmployeeCreatedRoles = async (req, res) => {
     return res.status(500).json({
       isOk: false,
       message: "Internal server error",
+    });
+  }
+};
+/**
+ * The roles this caller may put on a member of staff.
+ *
+ * This is what the admin panel's Role dropdown reads, and it exists because
+ * the roles SCREEN is reserved to the super admin while creating staff is not.
+ * A branch admin legitimately holds `write` on /employee, so they were being
+ * asked to pick a role from a list they were 403'd out of — the dropdown came
+ * back empty and the form refused to save, which is the bug the owner hit.
+ *
+ * It is not the roles screen with a softer gate. It returns ids and names only,
+ * for roles the caller could already assign anyway, so it discloses nothing
+ * they could not establish by trying one. The alternative — showing every role
+ * and refusing on save — is the same dead end wearing a different hat.
+ *
+ * The bound itself is middlewares/roleCeiling.js, shared with the role-editing
+ * guard so the two cannot drift.
+ */
+export const listAssignableRolesHandler = async (req, res) => {
+  try {
+    const roles = await listAssignableRoles(req);
+    return res.status(200).json({ isOk: true, status: 200, data: roles });
+  } catch (error) {
+    console.error("Error in listAssignableRoles", error);
+    return res.status(500).json({
+      isOk: false,
+      status: 500,
+      message: error.message,
     });
   }
 };
