@@ -1,9 +1,11 @@
 import SiteContent from "../models/SiteContent.js";
 import SiteItem from "../models/SiteItem.js";
+import SiteNotice from "../models/SiteNotice.js";
 import {
   CMS_FALLBACK_MENU_URL,
   menuUrlForPageKey,
   menuUrlForCollectionKey,
+  menuUrlForNoticeKind,
 } from "../config/cmsMenus.js";
 import {
   ensurePermissionsFresh,
@@ -187,6 +189,103 @@ export const siteItemDocTargets = async (req) => {
   const stored = await readStoredKey(SiteItem, req.params?.id, "collectionKey");
   const requested = normalizeKey(req.body?.collectionKey);
   return toTargets([stored, requested], menuUrlForCollectionKey);
+};
+
+/**
+ * SiteNotice resolvers — announcements (/cms/announcements) and banners
+ * (/cms/banners).
+ *
+ * SAME SHAPE AS THE TWO ABOVE, with one difference worth stating: the key here
+ * is `kind`, which is SCREAMING_SNAKE and a closed enum, so these do NOT run it
+ * through normalizeKey() (which lowercases and would miss every row).
+ * menuUrlForNoticeKind uppercases instead.
+ *
+ * WHY THE KIND IS THE PERMISSION BOUNDARY: posting "we are shut on Thursday"
+ * and publishing "20% off annual plans" are different jobs. Without this split
+ * the desk staffer who can post a closure could also publish a discount — see
+ * CMS_NOTICE_MENUS in config/cmsMenus.js.
+ */
+
+/**
+ * Reads `kind` off a list body, mirroring listSiteNoticesByParams' own
+ * precedence (top level wins over the nested `match` form) for exactly the
+ * reason readKeyFromListBody does: a request permission-checked against
+ * ANNOUNCEMENT and then answered with BANNER is the client/server disagreement
+ * this file exists to remove.
+ *
+ * @param {object} body req.body
+ * @returns {string} uppercased kind, or "" when the request asks for everything
+ */
+const readKindFromListBody = (body) => {
+  const source = body && typeof body === "object" ? body : {};
+  const toKind = (v) => (typeof v === "string" ? v.trim().toUpperCase() : "");
+
+  const topLevel = toKind(source.kind);
+  if (topLevel) return topLevel;
+
+  const match = source.match;
+  const matchIsObject =
+    match && typeof match === "object" && !Array.isArray(match);
+  return matchIsObject ? toKind(match.kind) : "";
+};
+
+/**
+ * Loads the stored `kind` for a `:id` route — the same one extra projected
+ * findById on a write path, for the same reason readStoredKey takes it: on PUT,
+ * DELETE and the image upload the kind is not in the request.
+ *
+ * @param {unknown} id req.params.id
+ * @returns {Promise<string>} uppercased stored kind, or ""
+ */
+const readStoredKind = async (id) => {
+  if (typeof id !== "string" || !id.trim()) return "";
+  try {
+    const doc = await SiteNotice.findById(id).select("kind").lean();
+    return typeof doc?.kind === "string" ? doc.kind.trim().toUpperCase() : "";
+  } catch {
+    // CastError on a malformed id is not an authorisation answer — same
+    // reasoning as readStoredKey: fall through to the all-pages grant and let
+    // the controller return its own honest 404.
+    return "";
+  }
+};
+
+/** POST /site/notices-by-params — the kind is in the body, or absent. */
+export const siteNoticeListTargets = async (req) =>
+  toTargets([readKindFromListBody(req.body)], menuUrlForNoticeKind);
+
+/**
+ * POST /site/notices — create. The kind is required by the controller.
+ *
+ * NOTE this route is multipart-capable but the uploader runs AFTER permission
+ * (as everywhere in site.routes.js), so on the image variant `req.body` is
+ * unparsed and the kind reads "" — which resolves to the all-pages grant. That
+ * is why creation with a file goes through the separate `:id/image` route
+ * instead: create the row first (JSON, kind known, permission checked on the
+ * right screen), then attach the creative to a row whose kind can be read back.
+ */
+export const siteNoticeCreateTargets = async (req) => {
+  const kind =
+    typeof req.body?.kind === "string" ? req.body.kind.trim().toUpperCase() : "";
+  return toTargets([kind], menuUrlForNoticeKind);
+};
+
+/**
+ * PUT/DELETE/POST-image /site/notices/:id.
+ *
+ * BOTH the stored kind AND, when the body changes it, the destination kind —
+ * identical reasoning to siteContentDocTargets. updateSiteNotice permits a kind
+ * change (an announcement that should have been a banner is a real edit), so
+ * checking only the stored kind would let somebody granted /cms/announcements
+ * pick up a notice, flip it to BANNER, and thereby publish to a screen they
+ * were never granted. Requiring both makes the conversion exactly as privileged
+ * as editing either end of it.
+ */
+export const siteNoticeDocTargets = async (req) => {
+  const stored = await readStoredKind(req.params?.id);
+  const requested =
+    typeof req.body?.kind === "string" ? req.body.kind.trim().toUpperCase() : "";
+  return toTargets([stored, requested], menuUrlForNoticeKind);
 };
 
 // ===================================================================
