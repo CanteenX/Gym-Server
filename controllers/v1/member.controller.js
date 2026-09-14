@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import Member from "../../models/Member.js";
 import MembershipPlan from "../../models/MembershipPlan.js";
+import {
+  getReferencingCounts,
+  formatReferenceMessage,
+} from "../../utils/referenceHelper.js";
 import { compressToWebP } from "../../middlewares/secureUpload.js";
 import { persistBuffer } from "../../storage/fileStore.js";
 import {
@@ -496,6 +500,40 @@ export const deleteMember = async (req, res) => {
       return res
         .status(404)
         .json({ isOk: false, status: 404, message: "Member not found" });
+    }
+
+    /**
+     * A member who has been to the gym cannot be erased, only the mistake can.
+     *
+     * Member is referenced by Attendance, BodyMetric, Booking, ReminderLog,
+     * WorkoutLog and — the one that costs money — Transaction. CLAUDE.md
+     * records that Transaction is the durable append-only cash ledger and the
+     * only correct source for any report or chart. A hard delete leaves those
+     * rows pointing at a member that no longer exists, so every financial
+     * total quietly stops reconciling and nothing errors anywhere.
+     *
+     * This is not "members cannot be deleted". With no references the delete
+     * still happens, which is the case that actually matters day to day: a
+     * mistyped row created a minute ago has no history and goes. Once there IS
+     * history, the honest action is to deactivate, and the 409 names exactly
+     * what is holding the row so the front desk can see why.
+     *
+     * Same helper and same shape as deleteCountry, deleteState, deleteCity,
+     * deleteCurrency, deleteDepartment and deleteRole.
+     */
+    const referenceInfo = await getReferencingCounts("Member", id);
+
+    if (referenceInfo.totalReferences > 0) {
+      return res.status(409).json({
+        isOk: false,
+        status: 409,
+        message:
+          "Cannot delete this member — they have attendance, payment or " +
+          "workout history. Mark them inactive instead.",
+        totalReferences: referenceInfo.totalReferences,
+        references: referenceInfo.details,
+        formattedMessage: formatReferenceMessage(referenceInfo.details),
+      });
     }
 
     await Member.findOneAndDelete({ _id: id, ...scopeFilter(req) });

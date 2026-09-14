@@ -48,6 +48,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import mongoose from "mongoose";
 
 import Member from "../../models/Member.js";
 import MembershipPlan from "../../models/MembershipPlan.js";
@@ -390,16 +391,37 @@ test("DELETE /members/:id — a Gotri admin cannot DELETE a Vasna member, and no
   }
 });
 
+/**
+ * deleteMember now consults getReferencingCounts() before it deletes, so this
+ * test has to get PAST that check to reach the write it is actually about.
+ *
+ * Two accommodations, both narrow and both about the guard rather than the
+ * scoping this test exists to pin:
+ *
+ *   - a real 24-hex id, because the helper constructs an ObjectId from it and
+ *     "member-1" throws;
+ *   - mongoose.modelNames() emptied, so the helper finds no referencing paths
+ *     and reports zero. There is no database here, so it cannot count for
+ *     real, and a member with references is the 409 path — a different test.
+ *
+ * The assertion is unchanged: the FILTER that reached findOneAndDelete still
+ * has to carry the caller's branch.
+ */
+const VALID_ID = "507f1f77bcf86cd799439011";
+
 test("DELETE /members/:id — the delete itself is scoped too, not just the guard", async () => {
-  const s = stub(Member, {
-    findOne: () => fakeQuery(memberRow({ branch: "Gotri" })),
-    findOneAndDelete: () => fakeQuery({}),
-  });
+  const s = stubAll([
+    [Member, {
+      findOne: () => fakeQuery(memberRow({ branch: "Gotri" })),
+      findOneAndDelete: () => fakeQuery({}),
+    }],
+    [mongoose, { modelNames: () => [] }],
+  ]);
   try {
     const res = fakeRes();
-    await deleteMember(gotriAdmin({}, { id: "member-1" }), res);
+    await deleteMember(gotriAdmin({}, { id: VALID_ID }), res);
     assert.equal(res.statusCode, 200);
-    assertScoped(s.firstArg("findOneAndDelete"), "Gotri", "the delete write");
+    assertScoped(s.at(0).firstArg("findOneAndDelete"), "Gotri", "the delete write");
   } finally {
     s.restore();
   }

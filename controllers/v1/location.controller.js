@@ -390,6 +390,28 @@ export const deleteState = async (req, res) => {
       });
     }
 
+    /**
+     * The same guard deleteCountry has carried all along.
+     *
+     * It was never copied down this file, so deleting a COUNTRY with states
+     * under it was refused while deleting one of those states went straight
+     * through — orphaning every city beneath it plus every Employee and
+     * CompanyMaster address pointing at it. There is no reason for the two to
+     * differ.
+     */
+    const referenceInfo = await getReferencingCounts("State", stateId);
+
+    if (referenceInfo.totalReferences > 0) {
+      return res.status(409).json({
+        message: "Cannot delete state. It is being used by other records.",
+        isOk: false,
+        status: 409,
+        totalReferences: referenceInfo.totalReferences,
+        references: referenceInfo.details,
+        formattedMessage: formatReferenceMessage(referenceInfo.details),
+      });
+    }
+
     await StateModels.deleteOne({ _id: stateId });
 
     return res.status(200).json({
@@ -699,6 +721,21 @@ export const deleteCity = async (req, res) => {
         isOk: false,
         message: "City not found",
         status: 404,
+      });
+    }
+
+    // As for State and Country above: an Employee or CompanyMaster address
+    // pointing here must not be left referencing a city that no longer exists.
+    const referenceInfo = await getReferencingCounts("City", cityId);
+
+    if (referenceInfo.totalReferences > 0) {
+      return res.status(409).json({
+        message: "Cannot delete city. It is being used by other records.",
+        isOk: false,
+        status: 409,
+        totalReferences: referenceInfo.totalReferences,
+        references: referenceInfo.details,
+        formattedMessage: formatReferenceMessage(referenceInfo.details),
       });
     }
 
