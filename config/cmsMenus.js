@@ -136,6 +136,33 @@ export const CMS_COLLECTION_MENUS = Object.freeze({
 });
 
 /**
+ * SiteNotice.kind -> menu URL.
+ *
+ * A THIRD MAP RATHER THAN MORE ENTRIES IN THE TWO ABOVE, because the join key
+ * is a different field: the CMS maps above key on a CONTENT key
+ * (SiteContent.pageKey, SiteItem.collectionKey), and a notice has neither — it
+ * has a `kind`. Folding "ANNOUNCEMENT" into CMS_PAGE_MENUS would mean
+ * menuUrlForPageKey() answering for a value that is not a pageKey, which is how
+ * a lookup starts returning confident nonsense.
+ *
+ * THE TWO SCREENS ARE SEPARATE ON PURPOSE, and this is the permission the
+ * restructure exists to make grantable. "Tell members the gym is shut on
+ * Thursday" and "run a 20%-off campaign on the home page" are different jobs
+ * with different blast radii: the first is operational and somebody at the desk
+ * should be able to do it today; the second is marketing and changes what the
+ * gym charges. One shared /cms/notices row would make the desk staffer who can
+ * post a closure also able to publish a discount.
+ *
+ * KEYS ARE THE STORED ENUM VALUES, UPPERCASE, matching models/SiteNotice.js.
+ * normalizeKey() lowercases, so the lookup helper uppercases instead — see
+ * menuUrlForNoticeKind.
+ */
+export const CMS_NOTICE_MENUS = Object.freeze({
+  ANNOUNCEMENT: "/cms/announcements",
+  BANNER: "/cms/banners",
+});
+
+/**
  * The sidebar tree scripts/seedCmsMenus.js builds, modelled on the reference
  * panel: flat pages first, the repeating lists grouped under one parent, then
  * the site chrome.
@@ -289,6 +316,34 @@ export const CMS_MENU_TREE = Object.freeze([
     sequence: 8,
     icon: "ri-shield-star-line",
   },
+  {
+    /**
+     * TOP-LEVEL, not under Content Management, and appended at 9-10 rather than
+     * slotted in — the same two rules every addition to this tree has followed.
+     *
+     * Top-level because these are site-WIDE, like Header / Footer / Social /
+     * Site Identity: an announcement is true on every page, and a banner is
+     * placed across pages rather than belonging to one. Content Management
+     * holds the lists that ARE a page's content (the programme cards, the
+     * pricing table), and neither of these is that.
+     *
+     * Appended rather than inserted because the eight rows above have been in
+     * the owner's sidebar since the restructure shipped, and renumbering them
+     * would move every entry under the cursor for screens that are new.
+     */
+    menuName: "Announcements",
+    menuUrl: "/cms/announcements",
+    sequence: 9,
+    icon: "ri-megaphone-line",
+  },
+  {
+    // Its own row rather than a tab on Announcements: see CMS_NOTICE_MENUS for
+    // why posting a closure and publishing a discount are separate grants.
+    menuName: "Banners",
+    menuUrl: "/cms/banners",
+    sequence: 10,
+    icon: "ri-slideshow-line",
+  },
 ]);
 
 /** Trim-and-lowercase, matching how both controllers normalise their keys. */
@@ -316,6 +371,27 @@ export const menuUrlForPageKey = (pageKey) =>
  */
 export const menuUrlForCollectionKey = (collectionKey) =>
   CMS_COLLECTION_MENUS[normalizeKey(collectionKey)] || CMS_FALLBACK_MENU_URL;
+
+/**
+ * Which menu permission governs a SiteNotice row.
+ *
+ * SAME FALLBACK RULE as the two above — an unrecognised kind takes the
+ * all-pages grant, because "no mapping" must never mean "no check". In practice
+ * `kind` is a closed enum the schema rejects, so the fallback here is reached
+ * only by a request that names a kind that does not exist, which the controller
+ * will 400 on anyway.
+ *
+ * UPPERCASES rather than using normalizeKey(): the stored enum values are
+ * SCREAMING_SNAKE and the map is keyed on them verbatim, so lowercasing would
+ * miss every row.
+ *
+ * @param {unknown} kind SiteNotice.kind
+ * @returns {string} a menuUrl checkPermission can resolve
+ */
+export const menuUrlForNoticeKind = (kind) => {
+  const key = typeof kind === "string" ? kind.trim().toUpperCase() : "";
+  return CMS_NOTICE_MENUS[key] || CMS_FALLBACK_MENU_URL;
+};
 
 /**
  * Every leaf menuUrl the tree defines, for the seed and for tests that assert

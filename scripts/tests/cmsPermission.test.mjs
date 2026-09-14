@@ -48,6 +48,7 @@ import {
   cmsLeafMenuUrls,
   CMS_PAGE_MENUS,
   CMS_COLLECTION_MENUS,
+  CMS_NOTICE_MENUS,
 } from "../../config/cmsMenus.js";
 
 // ===================================================================
@@ -81,6 +82,10 @@ const MENU_IDS = {
   "/cms/navlinks": "menu-cms-navlinks",
   "/cms/branches": "menu-cms-branches",
   "/cms/media": "menu-cms-media",
+  // Announcements and banners (models/SiteNotice.js). Two rows, not one,
+  // because posting a closure and publishing a discount are separate grants.
+  "/cms/announcements": "menu-cms-announcements",
+  "/cms/banners": "menu-cms-banners",
   // Not a CMS screen. Present so a fixture can hold a real permission on
   // something ELSE, which is what puts the session on the normal code path.
   "/seo-manager": "menu-seo-manager",
@@ -260,6 +265,10 @@ test("the seeded tree and the two key maps cannot drift apart", () => {
   for (const url of [
     ...Object.values(CMS_PAGE_MENUS),
     ...Object.values(CMS_COLLECTION_MENUS),
+    // The third map. Added with SiteNotice: a mapping whose URL the seed never
+    // creates resolves to nothing and silently falls through to the all-pages
+    // grant, which is the exact failure this loop exists to catch.
+    ...Object.values(CMS_NOTICE_MENUS),
   ]) {
     assert.ok(leaves.includes(url), `${url} is mapped but never seeded`);
   }
@@ -271,6 +280,11 @@ test("the seeded tree and the two key maps cannot drift apart", () => {
     [...leaves].sort(),
     [
       "/cms/about",
+      // Announcements and banners. The gym talking to its members, and the gym
+      // promoting itself — neither of which is an advert, which is a paying
+      // third party rendered under a "Sponsored" heading.
+      "/cms/announcements",
+      "/cms/banners",
       // The two branch CARDS on the public site (phone, hours, blurb, map
       // link). NOT /branch-master, which edits the operational branch records
       // whose name is stored on every member row and every transaction.

@@ -1,5 +1,19 @@
 import mongoose from "mongoose";
 
+/**
+ * THE LIVE-WINDOW RULE NOW LIVES IN models/liveWindow.js and is re-exported
+ * here unchanged, so every existing importer of this module keeps working.
+ *
+ * It moved because a second content type (models/SiteNotice.js — announcements
+ * and banners) needed the identical rule, and the comment below had always said
+ * never to re-write it inline. Honouring that meant either making a notice
+ * import the advert model — a dependency that would misdescribe the domain — or
+ * copying the expression, which is the thing forbidden. One shared module is
+ * the only answer that keeps ONE definition of "currently live" in the
+ * codebase.
+ */
+export { liveWindowFilter, isCurrentlyLive, liveStatus } from "./liveWindow.js";
+
 /** The slots on the public site an advert may occupy. */
 export const AD_PLACEMENTS = ["HOME_HERO", "HOME_MID", "SIDEBAR", "FOOTER"];
 
@@ -14,9 +28,10 @@ export const AD_PLACEMENTS = ["HOME_HERO", "HOME_MID", "SIDEBAR", "FOOTER"];
  * a job.
  *
  * "Currently live" is therefore: isActive AND (startAt unset or <= now) AND
- * (endAt unset or >= now). `liveWindowFilter()` below is the single expression
- * of that rule — never re-write it inline, or the admin "is it live?" badge and
- * the public endpoint will eventually disagree.
+ * (endAt unset or >= now). `liveWindowFilter()` in models/liveWindow.js, which
+ * this file re-exports, is the single expression of that rule — never re-write
+ * it inline, or the admin "is it live?" badge and the public endpoint will
+ * eventually disagree.
  *
  * Not branch-scoped, for the same reason as SiteContent: one public website.
  */
@@ -65,37 +80,5 @@ const AdvertisementSchema = new mongoose.Schema(
 
 /** Public reads are always "live adverts for a placement, in order". */
 AdvertisementSchema.index({ placement: 1, isActive: 1, sortOrder: 1 });
-
-/**
- * The Mongo filter fragment for "currently live", as defined above.
- *
- * Kept here, next to the fields it reads, so the public endpoint and any future
- * consumer share one definition of live.
- *
- * @param {Date} [now]
- * @returns {object} filter fragment to spread into a query
- */
-export const liveWindowFilter = (now = new Date()) => ({
-  isActive: true,
-  $and: [
-    { $or: [{ startAt: null }, { startAt: { $lte: now } }] },
-    { $or: [{ endAt: null }, { endAt: { $gte: now } }] },
-  ],
-});
-
-/**
- * The same rule applied to an already-loaded row, so the admin list can show a
- * live/scheduled/expired badge without a second query.
- *
- * @param {{isActive: boolean, startAt: Date|null, endAt: Date|null}} ad
- * @param {Date} [now]
- * @returns {boolean}
- */
-export const isCurrentlyLive = (ad, now = new Date()) => {
-  if (!ad?.isActive) return false;
-  if (ad.startAt && new Date(ad.startAt) > now) return false;
-  if (ad.endAt && new Date(ad.endAt) < now) return false;
-  return true;
-};
 
 export default mongoose.model("Advertisement", AdvertisementSchema);

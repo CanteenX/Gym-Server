@@ -9,6 +9,9 @@ import {
   siteItemListTargets,
   siteItemCreateTargets,
   siteItemDocTargets,
+  siteNoticeListTargets,
+  siteNoticeCreateTargets,
+  siteNoticeDocTargets,
 } from "../../middlewares/cmsPermission.js";
 import { authRateLimiter, uploadRateLimiter } from "../../middlewares/rateLimiter.js";
 import { createLeadValidation } from "../../middlewares/inputValidator.js";
@@ -29,6 +32,14 @@ import {
   updateAd,
   deleteAd,
 } from "../../controllers/v1/advertisement.controller.js";
+import {
+  getPublicNotices,
+  listSiteNoticesByParams,
+  createSiteNotice,
+  updateSiteNotice,
+  uploadSiteNoticeImage,
+  deleteSiteNotice,
+} from "../../controllers/v1/siteNotice.controller.js";
 import {
   createPublicLead,
   listLeadsByParams,
@@ -54,18 +65,26 @@ const router = express.Router();
 
 /**
  * Public website surface: editable marketing copy (SiteContent), repeating
- * structured records (SiteItem), banner adverts (Advertisement), inbound
- * enquiries (Lead) and per-route SEO metadata (SeoMeta).
+ * structured records (SiteItem), announcements and promotional banners
+ * (SiteNotice), third-party adverts (Advertisement), inbound enquiries (Lead)
+ * and per-route SEO metadata (SeoMeta).
  *
- * Five collections share one route file because they share one URL namespace
+ * SiteNotice IS NOT Advertisement, and the distinction is the reason it exists:
+ * an advert is a paying third party and renders under a "Sponsored" heading; an
+ * announcement is the gym telling its own members the place is shut on
+ * Thursday; a banner is the gym promoting itself. The owner once posted a
+ * holiday closure as an advert, and the site dutifully labelled the closure
+ * "Sponsored". Right pipeline, wrong vehicle.
+ *
+ * Six collections share one route file because they share one URL namespace
  * (/site/...) and one admin area ("Website"), the same way emails.routes.js
  * carries four email masters. Mounted flat under /api/v1 like every other route
  * file — paths are written in full here, not derived from a router prefix.
  *
  * SECURITY SHAPE, and it is not uniform across this file:
  *
- *   - FIVE endpoints are public and unauthenticated by design — the four reads
- *     the marketing site renders from (copy, list items, adverts, SEO
+ *   - SIX endpoints are public and unauthenticated by design — the five reads
+ *     the marketing site renders from (copy, list items, notices, adverts, SEO
  *     metadata), and the contact form POST. They are the only unauthenticated
  *     endpoints here and each is commented individually.
  *   - EVERY write is behind a staff session AND a permission check. Unlike the
@@ -143,6 +162,26 @@ const secureItemImageUpload = createSecureImageUpload({
   quality: 85,
 });
 
+const noticeImageUploadDir = "uploads/cms/notices";
+ensureLocalDir(noticeImageUploadDir);
+
+/**
+ * A FOURTH instance, and the same two rules apply: its own folder, and it never
+ * shares a route with another uploader.
+ *
+ * Only BANNERS use it — an announcement is a line of text and the controller
+ * refuses an image on one. Compression is ON and safe: this field accepts
+ * images only (ALLOWED_MIMES.images), never a PDF, so the shared WebP
+ * conversion cannot corrupt anything — the member ID-proof rule does not apply.
+ */
+const secureNoticeImageUpload = createSecureImageUpload({
+  destination: noticeImageUploadDir,
+  fieldName: "image",
+  maxSize: 5 * 1024 * 1024, // 5MB — banner creatives, not photography originals
+  compress: true,
+  quality: 85,
+});
+
 // ============ PUBLIC ENDPOINTS (NO AUTH — DELIBERATE) ============
 
 /**
@@ -194,6 +233,41 @@ router.get("/site/content", getPublicSiteContent);
 // would mean the marketing site could not render. Only isActive rows are
 // returned.
 router.get("/site/items", getPublicSiteItems);
+
+/**
+ * @swagger
+ * /site/notices:
+ *   get:
+ *     summary: Currently-live announcements and banners for the public website
+ *     tags: [Website]
+ *     parameters:
+ *       - in: query
+ *         name: kind
+ *         schema:
+ *           type: string
+ *           enum: [ANNOUNCEMENT, BANNER]
+ *         description: >
+ *           ANNOUNCEMENT is the gym talking to its members (a closure, a timing
+ *           change) and is site-wide. BANNER is a promotional slab placed in a
+ *           slot. Omit to get every live notice of both kinds.
+ *       - in: query
+ *         name: placement
+ *         schema:
+ *           type: string
+ *           enum: [HOME_TOP, HOME_MID, PROGRAMS_TOP, CONTACT_TOP]
+ *         description: >
+ *           BANNER only. Announcements carry no placement, so combining this
+ *           with kind=ANNOUNCEMENT correctly returns an empty list.
+ *     responses:
+ *       200:
+ *         description: Notices that are active and inside their date window
+ */
+// PUBLIC: this is the closure notice and the offer banner printed on
+// midcitygym.in. Requiring auth would mean the marketing site could not render
+// them. Scheduled and expired notices are filtered out in the controller, using
+// the SAME liveWindowFilter() the advert endpoint uses, so an ISR-cached page
+// can never keep serving a notice past its end date.
+router.get("/site/notices", getPublicNotices);
 
 /**
  * @swagger
@@ -409,6 +483,75 @@ router.delete(
   authMiddleware(["ADMIN", "EMPLOYEE"]),
   cmsPermission("delete", siteItemDocTargets),
   deleteSiteItem,
+);
+
+// ============ ADMIN — NOTICES (/cms/announcements, /cms/banners) ============
+
+/**
+ * PERMISSION FOLLOWS THE KIND, the same way the CMS routes above follow the
+ * page: an announcement resolves /cms/announcements and a banner /cms/banners,
+ * with /website-pages as the all-CMS fallback. The mapping lives in
+ * config/cmsMenus.js (CMS_NOTICE_MENUS) next to the tree scripts/seedCmsMenus.js
+ * builds the sidebar from, so the row the panel gates the SCREEN on and the row
+ * the server gates the SAVE on cannot drift.
+ *
+ * WHY TWO SCREENS AND NOT ONE: "tell members the gym is shut on Thursday" is an
+ * operational job somebody at the desk should be able to do today; "run a
+ * 20%-off campaign" is marketing and changes what the gym charges. One shared
+ * permission would make the first imply the second.
+ *
+ * On the `:id` routes the kind is not in the request, so the middleware reads
+ * the row first — one extra projected findById on a write path, spelled out in
+ * middlewares/cmsPermission.js.
+ */
+router.post(
+  "/site/notices-by-params",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  cmsPermission("read", siteNoticeListTargets),
+  listSiteNoticesByParams,
+);
+/**
+ * CREATE IS JSON, NOT MULTIPART — the one deliberate shape difference from
+ * POST /site/ads, and it is a permission decision as much as a modelling one.
+ * The uploader must run AFTER the permission check (so no bytes are written for
+ * a request that will 401), which means on a multipart create `req.body` is
+ * still unparsed and `kind` cannot be read — so such a request could only ever
+ * be checked against the all-pages grant, never against /cms/banners. Creating
+ * from JSON and attaching the creative afterwards keeps the narrow grants real.
+ */
+router.post(
+  "/site/notices",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  cmsPermission("write", siteNoticeCreateTargets),
+  createSiteNotice,
+);
+router.put(
+  "/site/notices/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  cmsPermission("edit", siteNoticeDocTargets),
+  updateSiteNotice,
+);
+/**
+ * Auth and permission run BEFORE the uploader, as everywhere else in this file:
+ * multer writes bytes (to disk or Blob) as soon as it runs, so a request that
+ * will 401 must be rejected while it is still just headers.
+ *
+ * BANNERS ONLY — the controller 400s on an announcement, which has no image
+ * slot to render one in.
+ */
+router.post(
+  "/site/notices/:id/image",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  cmsPermission("edit", siteNoticeDocTargets),
+  uploadRateLimiter,
+  secureNoticeImageUpload,
+  uploadSiteNoticeImage,
+);
+router.delete(
+  "/site/notices/:id",
+  authMiddleware(["ADMIN", "EMPLOYEE"]),
+  cmsPermission("delete", siteNoticeDocTargets),
+  deleteSiteNotice,
 );
 
 // ============ ADMIN — ADVERTS (/website-adverts) ============

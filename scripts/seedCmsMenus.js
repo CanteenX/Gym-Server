@@ -125,9 +125,31 @@ export const seedCmsMenus = async () => {
   // 1. Menu group. After Gym (1) and Website (2), alongside Insights (3):
   //    these are the screens that edit the public site, and they sit next to
   //    the Website group that already holds Adverts, Leads and SEO Manager.
-  let cmsGroup = await MenuGroupMaster.findOne({
-    menuGroupName: CMS_GROUP_NAME,
+  /**
+   * FIND THE GROUP BY ITS CONTENTS, NOT BY ITS DISPLAY NAME.
+   *
+   * This matched on menuGroupName alone, and the owner has since renamed the
+   * group from "CMS" to "Website" — the two top-level groups covering the same
+   * subject were merged because having both was confusing. A name lookup then
+   * finds nothing, creates a SECOND group also called "CMS" holding only the
+   * newest rows, and splits the sidebar in two with an orphaned parent between
+   * them. That happened once already and had to be repaired by hand.
+   *
+   * A group that already owns a /cms/* menu is this group, whatever it is
+   * called today. The name is a label the owner may change; the rows it holds
+   * are what identify it. Only when nothing owns a /cms/* row is there
+   * genuinely no group yet and one has to be created.
+   */
+  const anyCmsLeaf = await MenuMaster.findOne({
+    menuUrl: { $regex: "^/cms/" },
+    menuGroup: { $ne: null },
   });
+  let cmsGroup = anyCmsLeaf
+    ? await MenuGroupMaster.findById(anyCmsLeaf.menuGroup)
+    : null;
+  if (!cmsGroup) {
+    cmsGroup = await MenuGroupMaster.findOne({ menuGroupName: CMS_GROUP_NAME });
+  }
   if (!cmsGroup) {
     cmsGroup = await new MenuGroupMaster({
       menuGroupName: CMS_GROUP_NAME,
