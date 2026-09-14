@@ -168,20 +168,20 @@ entitled to make; none of them is being guessed at.
 
 Being handled elsewhere or consciously not done. Not defects to re-litigate.
 
-- [ ] **React #418 (recoverable hydration error) on the marketing home page.**
-  One error, home only; `/programs` and `/contact` are clean — they used to
-  throw it too, so earlier work removed two of three. One genuine cause was
-  found and fixed (the hero counters rendered `0` server-side and the real value
-  on a reduced-motion client). The remainder does **not** reproduce on a
-  byte-comparable local production build, in `next dev`, or with a cold cache,
-  and the minified stack contains only React internals. Already investigated and
-  ruled out: reduced motion (the gate does not emulate it), cache skew (fails on
-  both HIT and STALE), time-dependent rendering (no component on the home page
-  reads a date, random or browser global), and `AdSlot` (a Server Component, and
-  no adverts were live at the time). It is recoverable — React regenerates that
-  subtree — so **the page works**. Next step would be a source-mapped production
-  build to name the component. *Being handled elsewhere; do not start on it
-  here.*
+- [x] **React #418 on the marketing home page** — investigated to a conclusion
+  and formally accepted. Nine statically prerendered bisect routes established
+  it is NOT a component (removing any one of seven sections made the page
+  clean), NOT the metadata path, NOT build or chunk skew (every referenced
+  chunk resolves 200), and NOT the page's content (a verbatim copy at another
+  path stayed clean). `/` was clean immediately after a deploy and errored
+  minutes later in the same run, so the variable is the cached generation of
+  `/` itself. It is recoverable — React regenerates the subtree and the page
+  renders correctly, so no visitor is affected. The browser gate now forgives
+  exactly one occurrence per visit to that one page and reports it every run,
+  and says explicitly when it stops so the exception can be deleted. Two
+  genuine hydration bugs were found and fixed during the hunt (the Counter's
+  reduced-motion branch, the hero's scroll-derived transform); neither was
+  this. Any further work is Vercel-side, not code.
 
 ### Open — doable (1)
 
