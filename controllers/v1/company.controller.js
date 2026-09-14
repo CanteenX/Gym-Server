@@ -9,6 +9,14 @@ import {
   getLoginAttemptStatus,
 } from "../../services/authService.js";
 import EmployeeRoles from "../../models/EmployeeRoles.js";
+/**
+ * The same floor employee.controller.js uses, deliberately shared.
+ *
+ * The live super admin is a CompanyMaster row, so these two handlers are the
+ * ones that actually reach it — a guard that lived only on the Employee side
+ * was guarding an empty set.
+ */
+import { lastSuperAdminError } from "../../middlewares/superAdminFloor.js";
 
 
 
@@ -254,6 +262,30 @@ export const updateCompanyMaster = async (req, res) => {
         isOk: false,
         message: "Company Master not found",
       });
+    }
+
+    /**
+     * Deactivation reaches the same end as deletion, so it takes the same floor.
+     *
+     * `findUserByEmail` filters on `isActive: true`, so switching the last
+     * super admin off locks the system exactly as deleting it would — the row
+     * survives, but nobody can log in to the screens that could switch it back.
+     *
+     * Gated on an actual deactivation rather than run on every save: this
+     * handler is also how a super admin edits their own company details, and
+     * the guard refuses self-targeted removal. Running it unconditionally
+     * would make the owner unable to change their own address.
+     *
+     * The string check is not defensive padding — this route is multipart, so
+     * a checkbox arrives as the string "false", which is truthy.
+     */
+    const deactivating =
+      req.body.isActive === false || req.body.isActive === "false";
+    if (deactivating) {
+      const floorError = await lastSuperAdminError(req, companyMaster);
+      if (floorError) {
+        return res.status(403).json({ isOk: false, message: floorError });
+      }
     }
 
     const updateFields = [
@@ -683,6 +715,18 @@ export const deleteCompanyMaster = async (req, res) => {
         isOk: false,
         message: "Company Master not found",
       });
+    }
+
+    /**
+     * Before anything is unlinked, not after.
+     *
+     * The asset deletes below are not transactional — once the logo and
+     * favicon are gone from disk they do not come back if a later step
+     * refuses, so the refusal has to happen first.
+     */
+    const floorError = await lastSuperAdminError(req, company);
+    if (floorError) {
+      return res.status(403).json({ isOk: false, message: floorError });
     }
 
     // Delete custom uploaded assets

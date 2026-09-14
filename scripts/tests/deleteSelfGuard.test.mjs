@@ -40,9 +40,23 @@ const block = (name) => {
   return rest.slice(0, next ? next.index : rest.length);
 };
 
+/**
+ * The guard's DEFINITION moved out of this controller into
+ * middlewares/superAdminFloor.js, so these two tests follow it there.
+ *
+ * Not a weakening. The local copy counted `Employee` rows only, and the single
+ * super admin in this system is a `CompanyMaster` row — the count it consulted
+ * was live-zero, so the guard could never fire for the account it existed to
+ * protect. Shared, it counts both tables and company.controller.js calls the
+ * very same function, which is what stops the two sides drifting apart.
+ */
+const floor = fs.readFileSync("middlewares/superAdminFloor.js", "utf8");
+
 test("a guard exists and is shared, not copy-pasted per handler", () => {
-  assert.match(src, /const lastSuperAdminError\b/,
+  assert.match(floor, /export const lastSuperAdminError\b/,
     "expected one named guard both delete and deactivate can call");
+  assert.match(src, /middlewares\/superAdminFloor\.js/,
+    "and this controller must import it rather than keep its own copy");
 });
 
 test("deleteEmployee refuses self-deletion and the last super admin", () => {
@@ -56,11 +70,11 @@ test("deleteEmployee refuses self-deletion and the last super admin", () => {
 });
 
 test("the guard counts OTHER active super admins, not all rows", () => {
-  const i = src.indexOf("const lastSuperAdminError");
-  const g = src.slice(i, i + 1400);
-  assert.match(g, /isSuperAdmin:\s*true/, "must count super admins");
-  assert.match(g, /isActive:\s*(true|\{)/, "an inactive super admin is not a way back in");
-  assert.match(g, /\$ne/, "must exclude the row being removed, or it counts itself");
+  assert.match(floor, /isSuperAdmin:\s*true/, "must count super admins");
+  assert.match(floor, /isActive:\s*(true|\{)/, "an inactive super admin is not a way back in");
+  assert.match(floor, /\$ne/, "must exclude the row being removed, or it counts itself");
+  assert.match(floor, /CompanyMaster/,
+    "counting Employee alone is a live-zero count — the real super admin is a company row");
 });
 
 test("updateEmployee cannot deactivate the last super admin either", () => {

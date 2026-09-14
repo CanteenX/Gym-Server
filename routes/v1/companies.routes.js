@@ -160,6 +160,24 @@ router.get("/companies/public", getPublicCompanyDetails);
 router.put(
   "/companies/:id",
   authMiddleware(["ADMIN"]),
+  /**
+   * The same allowlist POST uses. Without it the handler's updateFields
+   * loop is the only thing deciding what a body may set, and anything
+   * added to that list later becomes writable here silently.
+   */
+  allowOnlyFields(allowedCompanyFields),
+  /**
+   * requireSuperAdmin, and it was the ONLY company route without it —
+   * POST, DELETE and GET all carried it.
+   *
+   * updateCompanyMaster re-hashes req.body.password onto the row and
+   * accepts isActive, and it never checked whose row :id names. So any
+   * CompanyMaster login could POST a new password onto the super admin's
+   * record and take the system over, or set isActive:false and lock
+   * everyone out permanently — findUserByEmail filters on isActive.
+   * An active takeover path, not merely a lockout.
+   */
+  requireSuperAdmin,
   uploadRateLimiter,         // Rate limit uploads
   secureCompanyUpload,       // Secure file validation & compression
   updateCompanyMaster,
