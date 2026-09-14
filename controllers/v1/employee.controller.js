@@ -300,6 +300,27 @@ export const updateEmployee = async (req, res) => {
       });
     }
 
+    /**
+     * Deactivation reaches the same end as deletion, so it needs the same
+     * floor. Switching off the last active super admin leaves nobody able to
+     * open the CMS, the audit log or the roles screens - and nobody able to
+     * grant it back, because granting it needs a screen nobody can open.
+     *
+     * Only checked when the request actually turns the account OFF: an edit
+     * that leaves isActive alone, or switches it on, is never the problem.
+     */
+    const turningOff = isActive === false || isActive === "false";
+    if (turningOff) {
+      const lastAdminError = await lastSuperAdminError(req, employee);
+      if (lastAdminError) {
+        return res.status(409).json({
+          isOk: false,
+          message: lastAdminError,
+          status: 409,
+        });
+      }
+    }
+
     const existingEmployee = await EmployeeModels.findOne({
       emailOffice: safeEmailOffice,
       _id: { $ne: safeEmployeeId },
@@ -351,6 +372,52 @@ export const updateEmployee = async (req, res) => {
   }
 };
 
+/**
+ * The floor under deletion and deactivation: never remove the last way in.
+ *
+ * employeeAccessError() refuses a BRANCH admin who reaches for a super admin,
+ * but returns null immediately for a super admin — who therefore had no guard
+ * at all. Two consequences, both unrecoverable from the panel:
+ *
+ *   - a super admin could delete or deactivate their own account mid-session;
+ *   - with one super admin in the system that also removes the LAST one, and
+ *     the CMS, SEO manager, audit log and role screens are reachable only
+ *     through the isSuperAdmin bypass. Nobody could grant it back, because
+ *     granting it requires a screen nobody can open. The only repair would be
+ *     editing the database by hand.
+ *
+ * Counts OTHER ACTIVE super admins: `$ne` the row being acted on, or it counts
+ * itself and cheerfully allows the removal; `isActive: true`, because a
+ * deactivated super admin is not a way back in either — and deactivation is
+ * exactly the door this guard also has to cover.
+ *
+ * Deleting a super admin is still allowed when another active one remains.
+ * This refuses the last one, not the idea.
+ *
+ * @param {object} req
+ * @param {{_id: any, isSuperAdmin?: boolean}} target
+ * @returns {Promise<string|null>} an error to refuse with, or null to allow
+ */
+const lastSuperAdminError = async (req, target) => {
+  const actingId = String(req.session?.user?.id || "");
+  if (actingId && actingId === String(target._id)) {
+    return "You cannot remove your own account while signed in to it.";
+  }
+  if (target.isSuperAdmin !== true) return null;
+
+  const othersLeft = await EmployeeModels.countDocuments({
+    _id: { $ne: target._id },
+    isSuperAdmin: true,
+    isActive: true,
+  });
+  if (othersLeft > 0) return null;
+  return (
+    "This is the last active super admin. Removing it would leave nobody able " +
+    "to reach the CMS, the audit log or the roles screens, and no way to grant " +
+    "it back. Create another super admin first."
+  );
+};
+
 export const deleteEmployee = async (req, res) => {
   try {
     const { employeeId } = req.params;
@@ -376,6 +443,15 @@ export const deleteEmployee = async (req, res) => {
         isOk: false,
         message: accessError,
         status: 403,
+      });
+    }
+
+    const lastAdminError = await lastSuperAdminError(req, employee);
+    if (lastAdminError) {
+      return res.status(409).json({
+        isOk: false,
+        message: lastAdminError,
+        status: 409,
       });
     }
 

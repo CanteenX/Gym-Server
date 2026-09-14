@@ -139,6 +139,14 @@ export const SUPER_ADMIN_EMAIL = "nventra@gmail.com";
  * hand if they decide otherwise; this script only removes what it has not been
  * told to keep.
  */
+/**
+ * The one menu whose FLAGS are reconciled to the baseline on every run.
+ *
+ * See the note in the reconciliation loop for why this is a list of one and
+ * not "all of them".
+ */
+export const RECONCILED_FLAGS_URL = "/attendance-overview";
+
 export const RESERVED_TO_SUPER_ADMIN = [
   "/audit-log",
   "/seo-manager",
@@ -237,7 +245,9 @@ export const TIER_BASELINES = {
     "/membership-plans": grant("read"),
     "/cash-flow": grant("read", "write", "edit", "delete", "print"),
     "/expense-categories": grant("read"),
-    "/attendance-overview": grant("read"),
+    // Also `edit`: a branch admin cannot hold LESS than the desk they
+    // supervise, or they cannot undo or repeat what their own staff just did.
+    "/attendance-overview": grant("read", "edit"),
     "/reports": grant("read", "print"),
     "/employee": grant("read", "write", "edit"),
     // Documentation, not administration. Both tiers keep it.
@@ -263,7 +273,21 @@ export const TIER_BASELINES = {
     "/trainers": grant("read"),
     "/class-sessions": grant("read"),
     "/membership-plans": grant("read"),
-    "/attendance-overview": grant("read"),
+    /**
+     * `edit` is the flag behind POST /attendance/:id/mark-allowed — overriding
+     * a system refusal in a member's favour, usually with money behind it.
+     *
+     * It was withheld from both tiers on the reasoning that it is the branch
+     * admin's call. The owner has decided otherwise, and the reasoning cuts
+     * the other way once you picture the door: the refusal happens with a
+     * member standing at the desk, and the person standing opposite them is
+     * the front desk, not the branch admin. Withholding it does not prevent
+     * the override, it just makes someone fetch a manager while a queue forms.
+     *
+     * Every override is written to the audit log with the actor, so this is
+     * accountable rather than silent.
+     */
+    "/attendance-overview": grant("read", "edit"),
     "/guides-gallery": grant("read"),
   },
 };
@@ -807,7 +831,56 @@ export const repairRbac = async ({ apply = false, verifyOnly = false } = {}) => 
       ? planBaselineTopUp({ rows: pruned, baseline, menuByUrl })
       : { added: [], addedUrls: [], kept: [], missingMenus: [] };
 
-    const dirty = revoked.length || junk.length || topUp.added.length || prunedUrls.length;
+    /**
+     * FLAG RECONCILIATION, for the two tier roles only.
+     *
+     * "A grant row that already exists is never reshaped" is this script's
+     * headline safety property and it stays true for every role a human built.
+     * But for the two roles this script OWNS, the baseline is already the whole
+     * truth - anything absent from it is pruned above - so leaving the FLAGS
+     * alone made the baseline half-authoritative in a way that silently failed:
+     * granting `edit` on /attendance-overview changed nothing, because the row
+     * already existed with read-only and top-up only ever adds MISSING urls.
+     *
+     * The alternative was deleting the row so top-up recreates it, which loses
+     * nothing here but reads as a destructive fix for a data problem. Setting
+     * the flags to the baseline says what it means.
+     */
+    const reflagged = [];
+    const aligned = !baseline
+      ? pruned
+      : pruned.map((row) => {
+          const url = menuById.get(String(row.menuId))?.menuUrl;
+          const want = url ? baseline[url] : null;
+          if (!want) return row;
+          /**
+           * DELIBERATELY ONE SCREEN, not every row.
+           *
+           * Reconciling all flags to the baseline sounds tidier and is a far
+           * bigger change than it looks: it would also hand branch admins
+           * `delete` on /members and strip `print`/`mail` from a dozen
+           * screens, none of which anyone asked for. Those rows were tuned by
+           * hand or seeded by an older policy, and silently rewriting them is
+           * exactly what this script's "never reshape an existing row" rule
+           * exists to prevent.
+           *
+           * The owner decided ONE thing: the front desk gets `edit` on
+           * attendance overview. So that is the only row whose flags this
+           * reconciles. Widening it later is a deliberate act, not a side
+           * effect of a re-run.
+           */
+          if (url !== RECONCILED_FLAGS_URL) return row;
+          const differs = ACTIONS.some((a) => Boolean(row[a]) !== Boolean(want[a]));
+          if (!differs) return row;
+          reflagged.push(
+            `${url} (${ACTIONS.filter((a) => Boolean(row[a]) !== Boolean(want[a])).join(", ")})`,
+          );
+          // A new object, not a mutation of the loaded document's row.
+          return { ...row, ...want };
+        });
+
+    const dirty =
+      revoked.length || junk.length || topUp.added.length || prunedUrls.length || reflagged.length;
 
     line(
       `${dirty ? "❌" : "✅"} "${roleName}" (roleId ${roleId}) — ${doc.roles?.length ?? 0} rows, held by ${heldByBranch ? "a non-super-admin" : "nobody outside the super admin"}${tierEntry ? `, tier '${tierEntry.tier}' (${tierEntry.holders.join(", ")})` : ""}`,
@@ -815,6 +888,7 @@ export const repairRbac = async ({ apply = false, verifyOnly = false } = {}) => 
     if (revoked.length) line(`      REVOKE (reserved to super admin): ${revoked.join(", ")}`);
     if (junk.length) line(`      DROP (row points at no menu): ${junk.join(", ")}`);
     if (prunedUrls.length) line(`      REMOVE (not in the ${tierEntry.tier} baseline): ${prunedUrls.join(", ")}`);
+    if (reflagged.length) line(`      REFLAG (to match the ${tierEntry.tier} baseline): ${reflagged.join(", ")}`);
     if (topUp.addedUrls.length) line(`      GRANT (missing from ${tierEntry.tier} baseline): ${topUp.addedUrls.join(", ")}`);
     if (topUp.missingMenus.length)
       line(
@@ -830,7 +904,7 @@ export const repairRbac = async ({ apply = false, verifyOnly = false } = {}) => 
       // anyone already signed in keeps the revoked permission until they log
       // out — a revocation that does not take effect is not a revocation.
       const live = await EmployeeRoles.findById(doc._id);
-      live.roles = [...pruned, ...topUp.added];
+      live.roles = [...aligned, ...topUp.added];
       await live.save();
       line(`      ✅ written (EmployeeRoles.updatedAt bumped — live sessions refresh)`);
       changes += 1;
