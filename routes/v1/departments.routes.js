@@ -10,6 +10,34 @@ import {
   listDepartmentByParams,
 } from "../../controllers/v1/department.controller.js";
 
+/**
+ * READS ARE LOOKUPS AND ARE NOT GATED ON THE MENU. WRITES STILL ARE.
+ *
+ * models/MenuMaster.js has one switch, `isActive`, and it means two unrelated
+ * things: "show this in the sidebar", and "this menu backs an API" —
+ * hasMenuPermission() resolves `{ menuUrl, isActive: true }`, so an inactive
+ * row returns menuFound false and 403s everyone but the super admin, who
+ * bypasses the check and therefore cannot see that anything broke.
+ *
+ * The `/department` row IS inactive. Someone hid the Department screen, which
+ * is reasonable — this is a gym, not an HR system. But these reads are not
+ * really the Department screen's: Gym-Admin's Employee form calls the list to
+ * fill its Department dropdown. Gated, that chain ran
+ *
+ *     branch admin opens Employee form -> GET /departments -> 403 ->
+ *     empty dropdown -> "Department is required" -> cannot save ANY employee.
+ *
+ * A lookup read must not depend on the sidebar state of a screen that merely
+ * happens to own the same data, so the three reads sit behind authMiddleware
+ * alone — staff-only, not public. This is the same reasoning CLAUDE.md records
+ * for why checkPermission is deliberately absent from the gym routes.
+ *
+ * Creating, editing and deleting a department genuinely IS that screen's
+ * business, so those three keep their permission checks. Opening the reads
+ * must not open the writes; scripts/tests/menuDeactivationGuard.test.mjs pins
+ * both halves.
+ */
+
 const router = express.Router();
 
 /**
@@ -65,7 +93,6 @@ router.post(
 router.get(
   "/departments",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/department", "read"),
   listDepartments,
 );
 
@@ -93,7 +120,6 @@ router.get(
 router.get(
   "/departments/:departmentId",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/department", "read"),
   getDeparmentById,
 );
 
@@ -184,7 +210,6 @@ router.delete(
 router.post(
   "/departments/search",
   authMiddleware(["ADMIN", "EMPLOYEE"]),
-  checkPermission("/department", "read"),
   listDepartmentByParams,
 );
 

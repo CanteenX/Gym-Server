@@ -210,9 +210,12 @@ export const listDepartmentByParams = async (req, res) => {
     if (typeof safeIsActive === "boolean") {
       matchCondition.isActive = safeIsActive;
     }
-    if (req.user.role === "EMPLOYEE") {
-      matchCondition.createdBy = new mongoose.Types.ObjectId(req.user.id);
-    }
+    /**
+     * NO createdBy FILTER — see listDepartments below for the full reasoning.
+     * Short version: `role` is which table you logged in from, so every staff
+     * login is "EMPLOYEE", and the super admin created these rows, so this
+     * returned an empty list to every branch admin.
+     */
     const safeSkip = Number.isInteger(Number(skip)) ? Number(skip) : 0;
 
     const safePerPage = Number.isInteger(Number(per_page))
@@ -295,11 +298,42 @@ export const listDepartmentByParams = async (req, res) => {
 
 export const listDepartments = async (req, res) => {
   try {
-    let filter = { isActive: true };
-
-    if (req.user.role === "EMPLOYEE") {
-      filter.createdBy = new mongoose.Types.ObjectId(req.user.id);
-    }
+    /**
+     * ========================================================================
+     * WHY THERE IS NO createdBy FILTER HERE.
+     * ========================================================================
+     * This used to read:
+     *
+     *     if (req.user.role === "EMPLOYEE") {
+     *       filter.createdBy = new mongoose.Types.ObjectId(req.user.id);
+     *     }
+     *
+     * inherited from the SaaS template this codebase started from. `role` is
+     * which TABLE you logged in from, not a privilege level — so every staff
+     * login is "EMPLOYEE", branch admin and front desk alike, and only the
+     * super admin (a CompanyMaster row) escaped it. The super admin created
+     * both departments, so every branch admin got back an empty list.
+     * Measured live: 2 rows in the database, 0 returned to the Vasna admin.
+     *
+     * An empty list is the worst way for this to fail — it reads as "no
+     * departments yet" rather than "you were filtered out", so nothing
+     * errored anywhere. Gym-Admin's Employee form fills its Department
+     * dropdown from here and then refuses to submit without a selection, so
+     * the symptom was a branch admin unable to save any employee, with
+     * nothing on screen naming the cause.
+     *
+     * A department is a two-row global master with no branch and no tenant
+     * dimension; there is nothing for it to be scoped by. listBranches, the
+     * closest comparable master, has no such filter either. This is not a
+     * licence to drop scoping generally — where a collection genuinely
+     * belongs to a branch, use middlewares/branchScope.js. "Whoever typed it
+     * in" was simply never the right axis for a shared lookup.
+     *
+     * The identical filter was removed from employee.controller.js for the
+     * same reason; four sibling controllers still carry it (email*, roles),
+     * so do not copy it back from one of those.
+     */
+    const filter = { isActive: true };
     const departments = await DepartmentModels.find(filter);
 
     return res.status(200).json({
