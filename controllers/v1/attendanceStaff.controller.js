@@ -379,8 +379,8 @@ export const getInGymNow = async (req, res) => {
     // prettier-ignore
     const [sessions, staleOpenSessions, denialRows, deniedToday] = await Promise.all([
       Attendance.find(openFilter)
-        .select("subjectType memberId trainerId branch checkInAt date")
-        .populate("memberId", "fullName mobileNumber photo branch")
+        .select("subjectType memberId trainerId branch checkInAt date source")
+        .populate("memberId", "fullName mobileNumber photo branch endDate planCode")
         // Populated too, or a trainer shift shows up on the floor as a blank
         // row with no name on it once ?subjectType is TRAINER or ALL.
         .populate("trainerId", "fullName mobileNumber branch")
@@ -403,7 +403,7 @@ export const getInGymNow = async (req, res) => {
         .select(
           "subjectType memberId trainerId branch checkInAt date deniedReason source updatedAt",
         )
-        .populate("memberId", "fullName mobileNumber photo branch endDate")
+        .populate("memberId", "fullName mobileNumber photo branch endDate planCode")
         .populate("trainerId", "fullName mobileNumber branch")
         .sort({ updatedAt: -1 })
         .limit(DENIAL_CAP)
@@ -419,36 +419,50 @@ export const getInGymNow = async (req, res) => {
       Attendance.countDocuments(denialMatch),
     ]);
 
-    const data = sessions.map((s) => ({
-      _id: s._id,
-      subjectType: s.subjectType || "MEMBER",
-      branch: s.branch,
-      checkInAt: s.checkInAt,
-      minutesSoFar: Math.max(
-        0,
-        Math.round((now - new Date(s.checkInAt)) / 60000),
-      ),
-      // `member` keeps its exact former shape and meaning — null on a trainer
-      // row — so the existing admin feed renders unchanged. `trainer` is the
-      // new, separate key rather than a person squeezed into `member`, because
-      // a screen that showed a trainer under the member column would be lying
-      // in the same way the unfiltered footfall count did.
-      member: s.memberId
-        ? {
-            _id: s.memberId._id,
-            fullName: s.memberId.fullName,
-            mobileNumber: s.memberId.mobileNumber,
-            photo: s.memberId.photo,
-          }
-        : null,
-      trainer: s.trainerId
-        ? {
-            _id: s.trainerId._id,
-            fullName: s.trainerId.fullName,
-            mobileNumber: s.trainerId.mobileNumber,
-          }
-        : null,
-    }));
+    const data = sessions.map((s) => {
+      const m = s.memberId;
+      let daysUntilExpiry = null;
+      let isExpiringSoon = false;
+      let isExpired = false;
+      if (m?.endDate) {
+        const endMidnight = startOfDay(new Date(m.endDate));
+        daysUntilExpiry = Math.round((endMidnight - todayStart) / 86400000);
+        isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 7;
+        isExpired = daysUntilExpiry < 0;
+      }
+
+      return {
+        _id: s._id,
+        subjectType: s.subjectType || "MEMBER",
+        branch: s.branch,
+        checkInAt: s.checkInAt,
+        source: s.source || "SELF",
+        minutesSoFar: Math.max(
+          0,
+          Math.round((now - new Date(s.checkInAt)) / 60000),
+        ),
+        member: m
+          ? {
+              _id: m._id,
+              fullName: m.fullName,
+              mobileNumber: m.mobileNumber,
+              photo: m.photo,
+              endDate: m.endDate || null,
+              planCode: m.planCode || null,
+              daysUntilExpiry,
+              isExpiringSoon,
+              isExpired,
+            }
+          : null,
+        trainer: s.trainerId
+          ? {
+              _id: s.trainerId._id,
+              fullName: s.trainerId.fullName,
+              mobileNumber: s.trainerId.mobileNumber,
+            }
+          : null,
+      };
+    });
 
     /**
      * The refusals, shaped like the sessions above so one list component can
@@ -461,33 +475,48 @@ export const getInGymNow = async (req, res) => {
      * so "denied at 07:00, tried again three times since" is readable without
      * another query.
      */
-    const denials = denialRows.map((d) => ({
-      _id: d._id,
-      subjectType: d.subjectType || "MEMBER",
-      branch: d.branch,
-      deniedReason: d.deniedReason,
-      deniedAt: d.checkInAt,
-      lastAttemptAt: d.updatedAt || d.checkInAt,
-      source: d.source || "SELF",
-      member: d.memberId
-        ? {
-            _id: d.memberId._id,
-            fullName: d.memberId.fullName,
-            mobileNumber: d.memberId.mobileNumber,
-            photo: d.memberId.photo,
-            // The single most useful thing for the person picking up the phone:
-            // it names what has to be fixed before the next scan succeeds.
-            endDate: d.memberId.endDate || null,
-          }
-        : null,
-      trainer: d.trainerId
-        ? {
-            _id: d.trainerId._id,
-            fullName: d.trainerId.fullName,
-            mobileNumber: d.trainerId.mobileNumber,
-          }
-        : null,
-    }));
+    const denials = denialRows.map((d) => {
+      const m = d.memberId;
+      let daysUntilExpiry = null;
+      let isExpiringSoon = false;
+      let isExpired = false;
+      if (m?.endDate) {
+        const endMidnight = startOfDay(new Date(m.endDate));
+        daysUntilExpiry = Math.round((endMidnight - todayStart) / 86400000);
+        isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 7;
+        isExpired = daysUntilExpiry < 0;
+      }
+
+      return {
+        _id: d._id,
+        subjectType: d.subjectType || "MEMBER",
+        branch: d.branch,
+        deniedReason: d.deniedReason,
+        deniedAt: d.checkInAt,
+        lastAttemptAt: d.updatedAt || d.checkInAt,
+        source: d.source || "SELF",
+        member: m
+          ? {
+              _id: m._id,
+              fullName: m.fullName,
+              mobileNumber: m.mobileNumber,
+              photo: m.photo,
+              endDate: m.endDate || null,
+              planCode: m.planCode || null,
+              daysUntilExpiry,
+              isExpiringSoon,
+              isExpired,
+            }
+          : null,
+        trainer: d.trainerId
+          ? {
+              _id: d.trainerId._id,
+              fullName: d.trainerId.fullName,
+              mobileNumber: d.trainerId.mobileNumber,
+            }
+          : null,
+      };
+    });
 
     return res.status(200).json({
       isOk: true,

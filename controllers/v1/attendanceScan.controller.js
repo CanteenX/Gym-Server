@@ -218,6 +218,17 @@ export const scanCheckIn = async (req, res) => {
       decision,
     });
 
+    const doc = subject.doc;
+    let daysUntilExpiry = null;
+    let isExpiringSoon = false;
+    let isExpired = false;
+    if (subject.subjectType === "MEMBER" && doc?.endDate) {
+      const endMidnight = startOfDay(new Date(doc.endDate));
+      daysUntilExpiry = Math.round((endMidnight - today) / 86400000);
+      isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 7;
+      isExpired = daysUntilExpiry < 0;
+    }
+
     return res.status(200).json({
       isOk: true,
       status: 200,
@@ -229,6 +240,11 @@ export const scanCheckIn = async (req, res) => {
         attendanceId: saved ? saved._id : null,
         subjectType: subject.subjectType,
         checkInAt: saved ? saved.checkInAt : null,
+        fullName: doc?.fullName || null,
+        endDate: doc?.endDate || null,
+        daysUntilExpiry,
+        isExpiringSoon,
+        isExpired,
         // Repeated in the payload so no screen can present this as a turnstile.
         basis:
           "Self-reported check-in. The branch QR is a printed sticker and is not proof of presence.",
