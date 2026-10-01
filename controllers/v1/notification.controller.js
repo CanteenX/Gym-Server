@@ -10,13 +10,20 @@ import { getVapidKeys, sendWebPush } from "../../services/webPush.service.js";
 export async function getVapidPublicKey(req, res) {
   try {
     const keys = getVapidKeys();
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     res.json({
       success: true,
+      isOk: true,
       publicKey: keys.publicKey,
+      data: {
+        publicKey: keys.publicKey,
+      },
     });
   } catch (err) {
     console.error("getVapidPublicKey error:", err);
-    res.status(500).json({ success: false, message: "Failed to retrieve VAPID key" });
+    res.status(500).json({ success: false, isOk: false, message: "Failed to retrieve VAPID key" });
   }
 }
 
@@ -307,11 +314,12 @@ export async function savePushSubscription(req, res) {
 
     res.json({
       success: true,
+      isOk: true,
       message: "Push notification subscription registered successfully.",
     });
   } catch (err) {
     console.error("savePushSubscription error:", err);
-    res.status(500).json({ success: false, message: "Failed to register push subscription" });
+    res.status(500).json({ success: false, isOk: false, message: "Failed to register push subscription" });
   }
 }
 
@@ -366,12 +374,13 @@ export async function getMemberNotifications(req, res) {
 
     res.json({
       success: true,
+      isOk: true,
       data: formatted,
       unreadCount,
     });
   } catch (err) {
     console.error("getMemberNotifications error:", err);
-    res.status(500).json({ success: false, message: "Failed to load notifications" });
+    res.status(500).json({ success: false, isOk: false, message: "Failed to load notifications" });
   }
 }
 
@@ -400,9 +409,9 @@ export async function markNotificationRead(req, res) {
       }
     );
 
-    res.json({ success: true, message: "Marked as read" });
+    res.json({ success: true, isOk: true, message: "Marked as read" });
   } catch (err) {
     console.error("markNotificationRead error:", err);
-    res.status(500).json({ success: false, message: "Failed to update notification status" });
+    res.status(500).json({ success: false, isOk: false, message: "Failed to update notification status" });
   }
 }

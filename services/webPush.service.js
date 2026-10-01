@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import https from "https";
 import http from "http";
 import { URL } from "url";
@@ -11,6 +13,7 @@ import PushSubscription from "../models/PushSubscription.js";
 
 // Persistent or environment-provided VAPID Keypair (P-256 / prime256v1)
 let VAPID_KEYS = null;
+const VAPID_FILE = path.join(process.cwd(), "vapid.json");
 
 export function getVapidKeys() {
   if (VAPID_KEYS) return VAPID_KEYS;
@@ -23,16 +26,47 @@ export function getVapidKeys() {
     return VAPID_KEYS;
   }
 
-  // Generate self-contained EC keypair
-  const ecdh = crypto.createECDH("prime256v1");
-  ecdh.generateKeys();
-  const pub = ecdh.getPublicKey("base64url");
-  const priv = ecdh.getPrivateKey("base64url");
+  // Check if persisted vapid.json exists
+  try {
+    if (fs.existsSync(VAPID_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(VAPID_FILE, "utf8"));
+      if (saved?.publicKey && saved?.privateKey && saved.privateKey !== "VAPID_DEFAULT_PRIVATE_KEY_SET") {
+        VAPID_KEYS = saved;
+        return VAPID_KEYS;
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to read vapid.json:", e.message);
+  }
+
+  // Generate self-contained EC keypair on prime256v1
+  const curve = crypto.createECDH("prime256v1");
+  curve.generateKeys();
+
+  let publicKeyBuffer = curve.getPublicKey();
+  let privateKeyBuffer = curve.getPrivateKey();
+
+  // Zero-pad to ensure exact byte lengths (32 bytes private, 65 bytes uncompressed public)
+  if (privateKeyBuffer.length < 32) {
+    const pad = Buffer.alloc(32 - privateKeyBuffer.length, 0);
+    privateKeyBuffer = Buffer.concat([pad, privateKeyBuffer]);
+  }
+  if (publicKeyBuffer.length < 65) {
+    const pad = Buffer.alloc(65 - publicKeyBuffer.length, 0);
+    publicKeyBuffer = Buffer.concat([pad, publicKeyBuffer]);
+  }
 
   VAPID_KEYS = {
-    publicKey: pub,
-    privateKey: priv,
+    publicKey: publicKeyBuffer.toString("base64url"),
+    privateKey: privateKeyBuffer.toString("base64url"),
   };
+
+  try {
+    fs.writeFileSync(VAPID_FILE, JSON.stringify(VAPID_KEYS, null, 2), "utf8");
+    console.log("Generated and persisted new VAPID keys to", VAPID_FILE);
+  } catch (e) {
+    console.warn("Could not persist vapid.json:", e.message);
+  }
 
   return VAPID_KEYS;
 }
