@@ -395,6 +395,7 @@ import auditLogRoutes from "./routes/v1/auditLog.routes.js";
 import classRoutes from "./routes/v1/classes.routes.js";
 import jobRoutes from "./routes/v1/jobs.routes.js";
 import holidayRoutes from "./routes/v1/holidays.routes.js";
+import notificationRoutes from "./routes/v1/notification.routes.js";
 
 app.use("/api/v1", companiesRoutes);
 app.use("/api/v1", currenciesRoutes);
@@ -443,6 +444,8 @@ app.use("/api/v1", jobRoutes);
 // Same flat mount as everything else, and it must stay under /api/ or the
 // SPA catch-all below swallows it.
 app.use("/api/v1", holidayRoutes);
+// Notification Centre: staff push broadcast tabs + member PWA subscription/inbox
+app.use("/api/v1", notificationRoutes);
 
 console.log("✅ V1 API routes loaded");
 
