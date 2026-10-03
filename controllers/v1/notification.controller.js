@@ -36,10 +36,11 @@ export async function getAudienceCounts(req, res) {
     today.setHours(0, 0, 0, 0);
 
     const [totalUsers, paidUsers, pushSubscribers] = await Promise.all([
-      Member.countDocuments(),
+      Member.countDocuments({ allowNotifications: { $ne: false } }),
       Member.countDocuments({
         balanceAmount: { $lte: 0 },
         endDate: { $gte: today },
+        allowNotifications: { $ne: false },
       }),
       PushSubscription.countDocuments({ active: true }),
     ]);
@@ -140,9 +141,15 @@ export async function sendNotification(req, res) {
           message: "Please select a specific member to notify.",
         });
       }
-      const member = await Member.findById(targetMemberId).select("fullName");
+      const member = await Member.findById(targetMemberId).select("fullName allowNotifications");
       if (!member) {
         return res.status(404).json({ success: false, message: "Target member not found." });
+      }
+      if (member.allowNotifications === false) {
+        return res.status(400).json({
+          success: false,
+          message: `${member.fullName} has turned off notifications in their profile.`,
+        });
       }
       targetMemberIds = [member._id];
       targetMemberName = member.fullName;
@@ -150,13 +157,16 @@ export async function sendNotification(req, res) {
       const paidMembers = await Member.find({
         balanceAmount: { $lte: 0 },
         endDate: { $gte: today },
+        allowNotifications: { $ne: false },
       })
         .select("_id")
         .lean();
       targetMemberIds = paidMembers.map((m) => m._id);
     } else {
       // ALL
-      const allMembers = await Member.find().select("_id").lean();
+      const allMembers = await Member.find({
+        allowNotifications: { $ne: false },
+      }).select("_id").lean();
       targetMemberIds = allMembers.map((m) => m._id);
     }
 
@@ -328,15 +338,34 @@ export async function savePushSubscription(req, res) {
  */
 export async function getMemberNotifications(req, res) {
   try {
-    const memberId = req.portalUser?.id || req.member?._id;
+    const memberId = req.portalUser?.id || req.member?._id || req.member?.id;
     if (!memberId) {
       return res.status(401).json({ success: false, message: "Not authenticated" });
     }
 
     const mId = new mongoose.Types.ObjectId(memberId);
 
+    // If notifications are turned off by member in their profile, silence inbox
+    const member = await Member.findById(mId).select("allowNotifications").lean();
+    if (member && member.allowNotifications === false) {
+      return res.json({
+        success: true,
+        isOk: true,
+        data: [],
+        notifications: [],
+        unreadCount: 0,
+      });
+    }
+
     const notifications = await Notification.aggregate([
-      { $match: { "recipients.memberId": mId } },
+      {
+        $match: {
+          $or: [
+            { "recipients.memberId": mId },
+            { targetType: "ALL" },
+          ],
+        },
+      },
       { $sort: { createdAt: -1 } },
       { $limit: 30 },
       {
@@ -376,6 +405,7 @@ export async function getMemberNotifications(req, res) {
       success: true,
       isOk: true,
       data: formatted,
+      notifications: formatted,
       unreadCount,
     });
   } catch (err) {
@@ -413,5 +443,49 @@ export async function markNotificationRead(req, res) {
   } catch (err) {
     console.error("markNotificationRead error:", err);
     res.status(500).json({ success: false, isOk: false, message: "Failed to update notification status" });
+  }
+}
+
+/**
+ * Member Portal: Update notification preferences (Allow / Mute).
+ */
+export async function updateNotificationPreference(req, res) {
+  try {
+    const memberId = req.portalUser?.id || req.member?._id || req.member?.id;
+    if (!memberId) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
+    }
+
+    const { allowNotifications, endpoint } = req.body;
+    const enabled = Boolean(allowNotifications);
+    const mId = new mongoose.Types.ObjectId(memberId);
+
+    // Update Member profile
+    await Member.findByIdAndUpdate(mId, { allowNotifications: enabled });
+
+    // Update PushSubscription status
+    if (!enabled) {
+      // Deactivate all push subscriptions for this member so no push alerts ever fire
+      await PushSubscription.updateMany(
+        { memberId: mId },
+        { $set: { active: false } }
+      );
+    } else if (endpoint) {
+      // Re-activate specific endpoint if passed
+      await PushSubscription.updateOne(
+        { memberId: mId, endpoint },
+        { $set: { active: true } }
+      );
+    }
+
+    res.json({
+      success: true,
+      isOk: true,
+      allowNotifications: enabled,
+      message: enabled ? "Notifications enabled" : "Notifications disabled",
+    });
+  } catch (err) {
+    console.error("updateNotificationPreference error:", err);
+    res.status(500).json({ success: false, message: "Failed to update notification preferences" });
   }
 }

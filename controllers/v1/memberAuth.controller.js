@@ -115,6 +115,7 @@ const publicProfile = (member) => ({
   paidAmount: member.paidAmount,
   balanceAmount: member.balanceAmount,
   mustChangePassword: member.mustChangePassword,
+  allowNotifications: member.allowNotifications !== false,
   isActive: member.isActive,
 });
 

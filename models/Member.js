@@ -242,6 +242,10 @@ const MemberSchema = new mongoose.Schema(
       min: 60,
       max: 120,
     },
+    allowNotifications: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true },
 );

@@ -10,6 +10,7 @@ import {
   savePushSubscription,
   getMemberNotifications,
   markNotificationRead,
+  updateNotificationPreference,
 } from "../../controllers/v1/notification.controller.js";
 
 const router = express.Router();
@@ -59,6 +60,12 @@ router.put(
   "/member-portal/notifications/:id/read",
   requirePortalUser,
   markNotificationRead
+);
+
+router.put(
+  "/member-portal/notification-preference",
+  requirePortalUser,
+  updateNotificationPreference
 );
 
 export default router;
