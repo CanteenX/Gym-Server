@@ -1,5 +1,6 @@
 import Attendance from "../../models/Attendance.js";
 import Member from "../../models/Member.js";
+import { broadcastLiveScan } from "../../services/liveAttendanceWs.js";
 
 /**
  * Member-portal attendance (check-in / check-out).
@@ -190,6 +191,35 @@ export const checkIn = async (req, res) => {
       branch: member.branch,
       date: today,
     });
+
+    try {
+      broadcastLiveScan({
+        action: "CHECK_IN",
+        session: {
+          _id: session._id,
+          subjectType: "MEMBER",
+          branch: member.branch,
+          checkInAt: session.checkInAt,
+          source: "SELF",
+          minutesSoFar: 0,
+          member: {
+            _id: member._id,
+            fullName: member.fullName,
+            mobileNumber: member.mobileNumber || "",
+            photo: member.photo || null,
+            endDate: member.endDate || null,
+            planCode: member.planCode || null,
+            daysUntilExpiry: null,
+            isExpiringSoon: false,
+            isExpired: false,
+          },
+          trainer: null,
+        },
+        denial: null,
+      });
+    } catch {
+      /* ignore */
+    }
 
     return res.status(200).json({
       isOk: true,

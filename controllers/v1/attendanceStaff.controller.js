@@ -316,6 +316,7 @@ export const getFootfall = async (req, res) => {
 export const getInGymNow = async (req, res) => {
   try {
     const now = new Date();
+    const todayStart = startOfDay(now);
     const sessionFloor = new Date(now.getTime() - MAX_SESSION_MINUTES * 60000);
 
     const requested = resolveBranchFilter(req, req.query.branch);
@@ -336,7 +337,7 @@ export const getInGymNow = async (req, res) => {
       checkOutAt: null,
       checkInAt: {
         $gte:
-          sinceValid && sinceValid > sessionFloor ? sinceValid : sessionFloor,
+          sinceValid && sinceValid > todayStart ? sinceValid : todayStart,
       },
       ...branchMatch,
     };
@@ -358,7 +359,6 @@ export const getInGymNow = async (req, res) => {
      * Yesterday's refusals are yesterday's: the gym is shut overnight and an
      * unbounded list would grow into a backlog nobody reads.
      */
-    const todayStart = startOfDay(now);
     const denialMatch = {
       ...IS_DENIED,
       date: { $gte: todayStart },

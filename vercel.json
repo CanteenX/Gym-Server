@@ -35,6 +35,10 @@
     {
       "path": "/api/v1/jobs/reminders",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/v1/jobs/cleanup",
+      "schedule": "0 0 * * *"
     }
   ],
   "git": {

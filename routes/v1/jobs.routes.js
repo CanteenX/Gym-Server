@@ -2,6 +2,7 @@ import express from "express";
 import {
   requireCronSecret,
   runRemindersJob,
+  runCleanupJob,
   getJobsStatus,
 } from "../../controllers/v1/jobs.controller.js";
 
@@ -42,6 +43,14 @@ const router = express.Router();
  */
 router.post("/jobs/reminders", requireCronSecret, runRemindersJob);
 router.get("/jobs/reminders", requireCronSecret, runRemindersJob);
+
+/**
+ * Database optimization cleanup job.
+ * Removes obsolete audit logs (>15d), broadcast & in-app notifications (>30d),
+ * dead push subscriptions (>30d), and idle login attempts (>15d).
+ */
+router.post("/jobs/cleanup", requireCronSecret, runCleanupJob);
+router.get("/jobs/cleanup", requireCronSecret, runCleanupJob);
 
 /**
  * @swagger

@@ -30,6 +30,8 @@ import { requestContext } from "./middlewares/requestContext.js";
 
 import { IS_SERVERLESS, IS_LONG_RUNNING } from "./config/runtime.js";
 import { connectDB } from "./config/db.js";
+import { handleWebSocketUpgrade } from "./services/liveAttendanceWs.js";
+import { startDailyCleanupSchedule } from "./services/dbCleanup.js";
 
 // ============ SECURITY IMPORTS ============
 // OWASP-compliant security middleware
@@ -528,9 +530,15 @@ const port = process.env.PORT || 8000;
 // Vercel imports this module and drives `app` as a request handler; binding a
 // port there is neither possible nor needed.
 if (IS_LONG_RUNNING) {
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`✅ Server is running on port ${port}`);
     console.log(`🔒 Security middleware enabled: Helmet, Rate Limiting, Input Validation, CSRF Protection`);
+    console.log(`⚡ Live Attendance WebSocket active on ws://localhost:${port}/ws/attendance-live`);
+    startDailyCleanupSchedule();
+  });
+
+  server.on("upgrade", (req, socket, head) => {
+    handleWebSocketUpgrade(req, socket, head);
   });
 }
 

@@ -93,7 +93,18 @@ export const isSuperAdmin = (req) => isSuperAdminSession(req);
 export const resolveBranchFilter = (req, requested) => {
   const own = scopedBranch(req);
   if (own) return own;
-  return typeof requested === "string" && requested.trim() ? requested.trim() : "";
+  if (!requested) return "";
+  const cleaned = String(requested).trim();
+  const lower = cleaned.toLowerCase();
+  if (
+    lower === "all" ||
+    lower === "all branches" ||
+    lower === "undefined" ||
+    lower === "null"
+  ) {
+    return "";
+  }
+  return cleaned;
 };
 
 /**

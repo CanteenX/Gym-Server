@@ -61,24 +61,25 @@ export async function getAudienceCounts(req, res) {
 
 /**
  * Search members for "A specific user" tab.
+ * When q is empty, returns the latest 50 members so users are immediately visible in the UI.
  */
 export async function searchMembersForNotification(req, res) {
   try {
     const q = (req.query.q || "").trim();
-    if (!q) {
-      return res.json({ success: true, data: [] });
-    }
+    const filter = q
+      ? {
+          $or: [
+            { fullName: new RegExp(q, "i") },
+            { mobileNumber: new RegExp(q, "i") },
+            { membershipNumber: new RegExp(q, "i") },
+          ],
+        }
+      : {};
 
-    const regex = new RegExp(q, "i");
-    const members = await Member.find({
-      $or: [
-        { fullName: regex },
-        { mobileNumber: regex },
-        { membershipNumber: regex },
-      ],
-    })
-      .select("_id fullName mobileNumber membershipNumber planCode endDate balanceAmount")
-      .limit(10)
+    const members = await Member.find(filter)
+      .select("_id fullName mobileNumber membershipNumber planCode endDate balanceAmount allowNotifications")
+      .sort({ createdAt: -1 })
+      .limit(50)
       .lean();
 
     // Check which of these members have active push subscriptions
@@ -106,6 +107,7 @@ export async function searchMembersForNotification(req, res) {
 
 /**
  * Dispatches custom notification to target audience (SPECIFIC, ALL, or PAID).
+ * Supports single targetMemberId or an array of targetMemberIds.
  */
 export async function sendNotification(req, res) {
   try {
@@ -114,6 +116,7 @@ export async function sendNotification(req, res) {
       body,
       targetType,
       targetMemberId,
+      targetMemberIds: incomingTargetMemberIds,
       linkUrl = "/dashboard",
       category = "GENERAL",
     } = req.body;
@@ -135,24 +138,42 @@ export async function sendNotification(req, res) {
     let targetMemberName = "";
 
     if (targetType === "SPECIFIC") {
-      if (!targetMemberId) {
+      const rawTargetIds = incomingTargetMemberIds || (targetMemberId ? [targetMemberId] : []);
+      const requestedIds = Array.isArray(rawTargetIds) ? rawTargetIds : [rawTargetIds];
+
+      if (requestedIds.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "Please select a specific member to notify.",
+          message: "Please select at least one specific member to notify.",
         });
       }
-      const member = await Member.findById(targetMemberId).select("fullName allowNotifications");
-      if (!member) {
-        return res.status(404).json({ success: false, message: "Target member not found." });
+
+      const members = await Member.find({ _id: { $in: requestedIds } })
+        .select("fullName allowNotifications")
+        .lean();
+
+      if (!members || members.length === 0) {
+        return res.status(404).json({ success: false, message: "Target member(s) not found." });
       }
-      if (member.allowNotifications === false) {
+
+      const eligibleMembers = members.filter((m) => m.allowNotifications !== false);
+      if (eligibleMembers.length === 0) {
         return res.status(400).json({
           success: false,
-          message: `${member.fullName} has turned off notifications in their profile.`,
+          message: members.length === 1
+            ? `${members[0].fullName} has turned off notifications in their profile.`
+            : "All selected members have turned off notifications in their profile.",
         });
       }
-      targetMemberIds = [member._id];
-      targetMemberName = member.fullName;
+
+      targetMemberIds = eligibleMembers.map((m) => m._id);
+      if (eligibleMembers.length === 1) {
+        targetMemberName = eligibleMembers[0].fullName;
+      } else if (eligibleMembers.length <= 3) {
+        targetMemberName = eligibleMembers.map((m) => m.fullName).join(", ");
+      } else {
+        targetMemberName = `${eligibleMembers[0].fullName}, ${eligibleMembers[1].fullName} + ${eligibleMembers.length - 2} more`;
+      }
     } else if (targetType === "PAID") {
       const paidMembers = await Member.find({
         balanceAmount: { $lte: 0 },
@@ -190,7 +211,8 @@ export async function sendNotification(req, res) {
       title: title.trim(),
       body: body.trim(),
       targetType,
-      targetMemberId: targetType === "SPECIFIC" ? targetMemberId : null,
+      targetMemberId: targetType === "SPECIFIC" && targetMemberIds.length === 1 ? targetMemberIds[0] : null,
+      targetMemberIds: targetType === "SPECIFIC" ? targetMemberIds : [],
       targetMemberName,
       linkUrl: linkUrl?.trim() || "/dashboard",
       category,

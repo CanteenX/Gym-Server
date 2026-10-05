@@ -51,6 +51,10 @@ const NotificationSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    targetMemberIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Member",
+    }],
     targetMemberName: {
       type: String,
       default: "",

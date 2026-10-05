@@ -7,6 +7,7 @@ import {
   VERDICT,
 } from "../../services/attendanceEligibility.js";
 import { scopedBranch } from "../../middlewares/branchScope.js";
+import { broadcastLiveScan } from "../../services/liveAttendanceWs.js";
 
 /**
  * QR check-in (plan.md D2, D2b, D3, D4).
@@ -229,6 +230,59 @@ export const scanCheckIn = async (req, res) => {
       isExpired = daysUntilExpiry < 0;
     }
 
+    try {
+      broadcastLiveScan({
+        action: decision.verdict === VERDICT.DENY ? "DENY" : "CHECK_IN",
+        session: saved ? {
+          _id: saved._id,
+          subjectType: subject.subjectType,
+          branch,
+          checkInAt: saved.checkInAt,
+          source,
+          minutesSoFar: 0,
+          member: subject.subjectType === "MEMBER" && doc ? {
+            _id: doc._id,
+            fullName: doc.fullName,
+            mobileNumber: doc.mobileNumber,
+            photo: doc.photo || null,
+            endDate: doc.endDate || null,
+            planCode: doc.planCode || null,
+            daysUntilExpiry,
+            isExpiringSoon,
+            isExpired,
+          } : null,
+          trainer: subject.subjectType === "TRAINER" && doc ? {
+            _id: doc._id,
+            fullName: doc.fullName,
+            mobileNumber: doc.mobileNumber,
+            branch: doc.branch,
+          } : null,
+        } : null,
+        denial: decision.verdict === VERDICT.DENY && saved ? {
+          _id: saved._id,
+          subjectType: subject.subjectType,
+          branch,
+          deniedReason: decision.reason,
+          lastAttemptAt: new Date(),
+          deniedAt: saved.checkInAt,
+          source,
+          member: doc ? {
+            _id: doc._id,
+            fullName: doc.fullName,
+            mobileNumber: doc.mobileNumber,
+            photo: doc.photo || null,
+            endDate: doc.endDate || null,
+            planCode: doc.planCode || null,
+            daysUntilExpiry,
+            isExpiringSoon,
+            isExpired,
+          } : null,
+        } : null,
+      });
+    } catch (wsErr) {
+      console.warn("Live scan broadcast failed:", wsErr);
+    }
+
     return res.status(200).json({
       isOk: true,
       status: 200,
@@ -333,7 +387,20 @@ const recordAttempt = async ({
     return existing.save();
   }
 
-  // An allowed row already exists. Untouched in both remaining cases.
+  if (!denied) {
+    // If the member previously checked out or was auto-closed earlier today,
+    // re-activate the session so it appears on the live scan monitor.
+    if (existing.checkOutAt !== null) {
+      existing.checkInAt = now;
+      existing.checkOutAt = null;
+      existing.autoClosed = false;
+    }
+    existing.branch = branch;
+    existing.source = source;
+    return existing.save();
+  }
+
+  // An allowed row already exists. Untouched in remaining cases.
   return existing;
 };
 

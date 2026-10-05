@@ -4,6 +4,7 @@ import {
   isLiveSendingEnabled,
 } from "../../services/reminderScheduler.js";
 import { MEMBER_COHORT_LIST } from "../../services/memberCohorts.js";
+import { cleanDatabase, RETENTION_CONFIG } from "../../services/dbCleanup.js";
 
 const ok = (res, status, message, data) =>
   res.status(status).json({ isOk: true, status, message, data });
@@ -173,6 +174,38 @@ export const runRemindersJob = async (req, res) => {
 };
 
 /**
+ * The database optimization cleanup cron.
+ *
+ * POST /api/v1/jobs/cleanup   (and GET for Vercel Cron invocation)
+ * Supports ?dryRun=true to preview documents eligible for deletion without deleting.
+ */
+export const runCleanupJob = async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    const params = { ...(req.query || {}), ...(req.body || {}) };
+    const dryRun = String(params.dryRun ?? "").trim() === "true";
+
+    const report = await cleanDatabase({ dryRun });
+    const totalCount = Object.values(report.totals).reduce((a, b) => a + b, 0);
+
+    return ok(
+      res,
+      200,
+      report.dryRun
+        ? `Dry run — previewed ${totalCount} document(s) eligible for deletion.`
+        : `Database optimization complete. Removed ${totalCount} obsolete document(s).`,
+      report,
+    );
+  } catch (error) {
+    console.error("❌ [jobs] database cleanup failed:", error);
+    return fail(res, 500, "Database cleanup failed", {
+      durationMs: Date.now() - startedAt,
+      detail: error?.message || String(error),
+    });
+  }
+};
+
+/**
  * A read-only answer to "is this thing armed?", behind the same secret.
  *
  * Exists because the single most likely operational mistake with this feature is
@@ -190,6 +223,10 @@ export const getJobsStatus = (_req, res) =>
       cohorts: MEMBER_COHORT_LIST,
       dailyCap: Number(process.env.REMINDER_DAILY_CAP) || 400,
       batchMax: Number(process.env.REMINDER_BATCH_MAX) || 60,
+    },
+    cleanup: {
+      schedule: "Daily at 00:00 UTC",
+      retention: RETENTION_CONFIG,
     },
     now: new Date().toISOString(),
   });

@@ -598,6 +598,20 @@ Reminders
 
 ---
 
+Database Optimization & Retention Cron
+- [x] Automated cleanup service in `Gym Server/services/dbCleanup.js`
+- [x] Daily Vercel Cron in `vercel.json` → `GET /api/v1/jobs/cleanup` (at midnight 00:00 UTC)
+- [x] Secured via `CRON_SECRET` on endpoints `POST /api/v1/jobs/cleanup` and `GET /api/v1/jobs/cleanup`
+- [x] Retention policy:
+      - `AuditLog`: purged after 15 days
+      - `Notification` (Broadcast & Dispatch History + in-app inbox): purged after 30 days
+      - `PushSubscription` (inactive only): purged after 30 days
+      - `LoginAttempt` (unlocked & idle): purged after 15 days
+      - `ReminderLog`: kept indefinitely
+- [x] Long-running server / PM2 fallback: `startDailyCleanupSchedule()` triggers recurring 24h cleanup automatically
+
+---
+
 ## Next up — CMS navigation, one menu entry per page
 
 Requested 2026-09-13, modelled on `marfatia.net/admin`, whose sidebar has a

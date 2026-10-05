@@ -23,6 +23,7 @@ import {
   getNotCheckedIn,
 } from "../../controllers/v1/attendanceStaff.controller.js";
 import { markAttendanceAllowed } from "../../controllers/v1/attendanceOverride.controller.js";
+import { handleSseStream } from "../../services/liveAttendanceWs.js";
 
 const router = express.Router();
 
@@ -207,6 +208,7 @@ router.get("/attendance/footfall", ...staffRead, getFootfall);
 // Polled by the admin panel every 30-60s: the API is a serverless function and
 // cannot hold a WebSocket (plan.md D2a), so the feed is a small, cheap GET.
 router.get("/attendance/live", ...staffRead, getInGymNow);
+router.get("/attendance/live-stream", handleSseStream);
 
 /**
  * @swagger
